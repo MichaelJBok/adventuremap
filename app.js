@@ -145,7 +145,7 @@ function sourceFor(category) {
       layout: { "text-field": ["get", "point_count_abbreviated"], "text-font": ["Noto Sans Bold"], "text-size": 12, "text-allow-overlap": true } });
   }
   map.addLayer({ id: `${id}-points`, type: "circle", source: id, filter: ["!", ["has", "point_count"]],
-    paint: { "circle-color": ["get", "color"], "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 3.5, 10, 7],
+    paint: { "circle-color": ["get", "color"], "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, clustered ? 3.5 : 5, 10, clustered ? 7 : 9],
       "circle-stroke-color": "#fff", "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 3, 1, 10, 2] } });
   map.addLayer({ id: `${id}-labels`, type: "symbol", source: id, minzoom: 13, filter: ["!", ["has", "point_count"]],
     layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Bold"], "text-size": 11, "text-offset": [0, 1], "text-anchor": "top", "text-optional": true },
