@@ -12,14 +12,17 @@ const NEW_CATEGORY = "__new__";
 const LIST_LIMIT = 100;
 const ALWAYS_VISIBLE = "Places"; // never consolidated into circles
 
-const BASE_COLORS = { "Places": "#0288D1", "Points of Interest": "#F9A825", "Geocaches": "#7CB342", "Dive Sites": "#E65100" };
-const EXTRA_COLORS = ["#8E24AA", "#D81B60", "#00897B", "#6D4C41", "#3949AB", "#C0CA33"];
+const MUSHROOMS = "Mushrooms"; // read-only layer: finds are kept and edited in Svampkartan
+const SVAMPKARTAN_KEY = "svampkartan.spots"; // same web address, so the same browser storage
+const BASE_COLORS = { "Places": "#0288D1", "Points of Interest": "#F9A825", "Geocaches": "#7CB342", "Dive Sites": "#E65100", [MUSHROOMS]: "#8E24AA" };
+const EXTRA_COLORS = ["#D81B60", "#00897B", "#6D4C41", "#3949AB", "#C0CA33", "#5E35B1"];
 
 // Labels on the base map that can be added, and the category each one suggests.
 const ADDABLE = { poi: "Points of Interest", mountain_peak: "Points of Interest", park: "Points of Interest",
   water_name: "Points of Interest", aerodrome_label: "Places", place: "Places" };
 
 let places = readJson(PLACES_KEY, []);
+let mushrooms = readJson(SVAMPKARTAN_KEY, []).map(toMushroom);
 let hidden = new Set(readJson(HIDDEN_KEY, []));
 let cloud = null; // set by sync.js while signed in
 let placing = false;
@@ -29,6 +32,22 @@ const sourceIds = new Map(); // category -> map source id
 
 // --- Data ---
 function saveLocal() { writeJson(PLACES_KEY, places); }
+
+const allPlaces = () => [...places, ...mushrooms];
+
+// A Svampkartan spot as a map entry. A visit logged with amount 0 means nothing was found that day.
+function toMushroom(s) {
+  const dates = [{ date: s.date, amount: s.amount }, ...(s.visits ?? [])]
+    .filter((v) => v.date && (v.amount === "" || Number(v.amount) !== 0))
+    .map((v) => v.date).sort().reverse();
+  return { id: `svamp-${s.id}`, lat: s.lat, lon: s.lon, name: s.species || "Unknown mushroom", category: MUSHROOMS,
+    date: dates[0] ?? "", dates, notes: s.notes ?? "", readOnly: true };
+}
+
+function setMushrooms(spots) {
+  mushrooms = spots.map(toMushroom);
+  renderAll();
+}
 
 function addPlaces(list) {
   const ids = new Set(list.map((p) => p.id));
@@ -48,6 +67,8 @@ function removePlace(id) {
 function categories() {
   return [...new Set([...Object.keys(BASE_COLORS), ...places.map((p) => p.category)])];
 }
+
+const addableCategories = () => categories().filter((c) => c !== MUSHROOMS);
 
 function colorOf(category) {
   if (BASE_COLORS[category]) return BASE_COLORS[category];
@@ -148,7 +169,7 @@ function textOn(hex) {
 function placesGeoJson(category) {
   return {
     type: "FeatureCollection",
-    features: hidden.has(category) ? [] : places.filter((p) => p.category === category).map((p) => ({
+    features: hidden.has(category) ? [] : allPlaces().filter((p) => p.category === category).map((p) => ({
       type: "Feature",
       geometry: { type: "Point", coordinates: [p.lon, p.lat] },
       properties: { id: p.id, name: p.name, color: colorOf(category) },
@@ -249,7 +270,7 @@ function showLabel(f, clicked) {
   const saved = findSaved(name, lat, lon);
   if (saved) { showPlace(saved.id); return; }
   const suggested = ADDABLE[f.sourceLayer];
-  const options = categories().map((c) => `<option${c === suggested ? " selected" : ""}>${esc(c)}</option>`).join("");
+  const options = addableCategories().map((c) => `<option${c === suggested ? " selected" : ""}>${esc(c)}</option>`).join("");
   const el = openPopup([lon, lat], `<div class="pop-title">${esc(name)}</div>
     <div class="pop-meta">${esc(kind)}</div>
     <div class="row"><select id="popCategory" aria-label="Category">${options}</select>
@@ -263,8 +284,15 @@ function showLabel(f, clicked) {
 }
 
 function showPlace(id) {
-  const p = places.find((x) => x.id === id);
+  const p = allPlaces().find((x) => x.id === id);
   if (!p) return;
+  if (p.readOnly) {
+    const found = p.dates.length ? `Found ${p.dates.join(", ")}` : "Date not recorded";
+    openPopup([p.lon, p.lat], `<div class="pop-title">${esc(p.name)}</div><div class="pop-meta">${esc(found)}</div>
+      ${p.notes ? `<p class="pop-notes">${esc(p.notes)}</p>` : ""}
+      <div class="pop-meta"><a href="../svampkartan/">Edit in Svampkartan</a></div>`);
+    return;
+  }
   const link = /^https?:\/\//.test(p.link || "") ? `<div class="pop-meta"><a href="${esc(p.link)}" target="_blank" rel="noopener">Open link</a></div>` : "";
   const notes = p.notes ? `<p class="pop-notes">${esc(p.notes)}</p>` : "";
   const el = openPopup([p.lon, p.lat], `<div class="pop-title">${esc(p.name)}</div>
@@ -284,7 +312,7 @@ function focusPlace(p) {
 
 // --- Form ---
 function renderCategorySelect(selected) {
-  $("fCategory").innerHTML = categories().map((c) => `<option${c === selected ? " selected" : ""}>${esc(c)}</option>`).join("")
+  $("fCategory").innerHTML = addableCategories().map((c) => `<option${c === selected ? " selected" : ""}>${esc(c)}</option>`).join("")
     + `<option value="${NEW_CATEGORY}">New category…</option>`;
   $("fOtherWrap").hidden = true;
 }
@@ -344,7 +372,7 @@ $("form").onsubmit = (e) => {
 // --- Side panel ---
 function renderCategories() {
   const counts = {};
-  places.forEach((p) => { counts[p.category] = (counts[p.category] ?? 0) + 1; });
+  allPlaces().forEach((p) => { counts[p.category] = (counts[p.category] ?? 0) + 1; });
   $("catList").innerHTML = categories().map((c) => `<li><label>
     <input type="checkbox" data-cat="${esc(c)}"${hidden.has(c) ? "" : " checked"}>
     <span class="dot" style="--c:${colorOf(c)}"></span><span>${esc(c)}</span>
@@ -361,7 +389,7 @@ $("catList").onchange = (e) => {
 
 function matchingPlaces() {
   const q = $("search").value.trim().toLowerCase();
-  return places
+  return allPlaces()
     .filter((p) => !hidden.has(p.category))
     .filter((p) => !q || p.name.toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q))
     .sort((a, b) => (b.date || "").localeCompare(a.date || "") || a.name.localeCompare(b.name));

@@ -61,17 +61,17 @@ const UPLOADED_KEY = "adventuremap.uploadedTo"; // accounts this device has alre
   };
   $("signOutBtn").onclick = () => auth.signOut();
 
-  let unsubscribe = null;
+  let unsubscribers = [];
   auth.onAuthStateChanged((user) => {
-    unsubscribe?.();
-    unsubscribe = null;
+    unsubscribers.forEach((stop) => stop());
+    unsubscribers = [];
     renderAccount(user);
     if (!user) {
       if (cloud) {
         // Just signed out: don't leave this account's places behind on the device.
         cloud = null;
         places = [];
-        saveLocal(); renderAll();
+        saveLocal(); setMushrooms([]);
       }
       setStatus("");
       return;
@@ -99,13 +99,17 @@ const UPLOADED_KEY = "adventuremap.uploadedTo"; // accounts this device has alre
     }
 
     setStatus("Loading your places…");
-    unsubscribe = col.onSnapshot({ includeMetadataChanges: true }, (snap) => {
+    // Mushroom finds are read straight from Svampkartan's collection, so new finds appear here too.
+    const finds = db.collection("users").doc(user.uid).collection("spots");
+    unsubscribers.push(finds.onSnapshot((snap) => setMushrooms(snap.docs.map((d) => d.data())), showError));
+
+    unsubscribers.push(col.onSnapshot({ includeMetadataChanges: true }, (snap) => {
       if (uploading && snap.empty) return; // nothing up there yet: keep the local copy until the upload lands
       places = snap.docs.map((d) => d.data());
       saveLocal(); renderAll();
       setStatus(snap.metadata.hasPendingWrites
         ? "Saved on this device. Will sync when you're online."
         : snap.metadata.fromCache ? `Offline · ${places.length} places on this device` : `Synced · ${places.length} places`);
-    }, showError);
+    }, showError));
   });
 })();
