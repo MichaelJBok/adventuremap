@@ -14,6 +14,7 @@
   #app { display:flex; height:100%; }
   #side { width:330px; padding:16px; overflow-y:auto; border-right:1px solid var(--border); }
   #map { flex:1; min-width:0; }
+  #app.menu-hidden #side { display:none; }
   h1 { font-size:18px; margin:0 0 4px; }
   h2 { font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:20px 0 8px; }
   p.hint { color:var(--muted); margin:0 0 8px; }
@@ -40,7 +41,7 @@
 
   /* Map */
   .pin-btn.maplibregl-ctrl { display:flex; }
-  .maplibregl-ctrl button.place-btn { width:44px; height:44px; display:flex; align-items:center; justify-content:center; padding:0; border:0; color:#444; }
+  .maplibregl-ctrl button.place-btn, .maplibregl-ctrl button.menu-btn { width:44px; height:44px; display:flex; align-items:center; justify-content:center; padding:0; border:0; color:#444; }
   .maplibregl-ctrl button.place-btn.active { background:var(--accent); color:#fff; }
   #map.placing .maplibregl-canvas { cursor:crosshair; }
   .maplibregl-popup-content { font:14px/1.4 -apple-system, system-ui, sans-serif; color:var(--fg); max-width:280px; max-height:320px; overflow-y:auto; padding:12px 14px; }

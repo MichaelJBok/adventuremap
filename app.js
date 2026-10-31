@@ -7,6 +7,7 @@ const writeJson = (key, value) => { try { localStorage.setItem(key, JSON.stringi
 const PLACES_KEY = "adventuremap.places";
 const HIDDEN_KEY = "adventuremap.hiddenCategories";
 const VIEW_KEY = "adventuremap.view";
+const MENU_KEY = "adventuremap.menuHidden";
 const NEW_CATEGORY = "__new__";
 const LIST_LIMIT = 100;
 const ALWAYS_VISIBLE = "Places"; // never consolidated into circles
@@ -90,6 +91,31 @@ class PinControl {
   onRemove() {}
 }
 map.addControl(new PinControl());
+
+// Hide / show the menu.
+class MenuControl {
+  onAdd() {
+    const box = document.createElement("div");
+    box.className = "maplibregl-ctrl maplibregl-ctrl-group";
+    box.innerHTML = `<button type="button" class="menu-btn" id="menuBtn">
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>`;
+    box.firstElementChild.onclick = () => setMenuHidden(!$("app").classList.contains("menu-hidden"));
+    return box;
+  }
+  onRemove() {}
+}
+map.addControl(new MenuControl(), "top-left");
+
+function setMenuHidden(hidden) {
+  $("app").classList.toggle("menu-hidden", hidden);
+  const label = hidden ? "Show menu" : "Hide menu";
+  $("menuBtn").title = label;
+  $("menuBtn").setAttribute("aria-label", label);
+  $("menuBtn").setAttribute("aria-pressed", String(hidden));
+  writeJson(MENU_KEY, hidden);
+  map.resize();
+}
+setMenuHidden(readJson(MENU_KEY, false));
 
 function setPlacing(on) {
   placing = on;
@@ -272,6 +298,7 @@ function showDraftPosition() {
 
 function openForm(at, editing = null) {
   closeForm();
+  setMenuHidden(false);
   const marker = new maplibregl.Marker({ draggable: true, color: "#1f6f8b" }).setLngLat([at.lon, at.lat]).addTo(map);
   marker.on("dragend", showDraftPosition);
   draft = { marker, editing };
