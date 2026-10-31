@@ -2,6 +2,7 @@
   "id": "./",
   "name": "Adventure Map",
   "short_name": "Adventures",
+  "description": "A personal map of places visited, geocache finds and dive sites.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
