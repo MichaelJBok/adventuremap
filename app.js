@@ -11,7 +11,7 @@ const NEW_CATEGORY = "__new__";
 const LIST_LIMIT = 100;
 const ALWAYS_VISIBLE = "Places"; // never consolidated into circles
 
-const BASE_COLORS = { "Points of Interest": "#F9A825", "Places": "#0288D1", "Geocaches": "#7CB342", "Dive Sites": "#E65100" };
+const BASE_COLORS = { "Places": "#0288D1", "Points of Interest": "#F9A825", "Geocaches": "#7CB342", "Dive Sites": "#E65100" };
 const EXTRA_COLORS = ["#8E24AA", "#D81B60", "#00897B", "#6D4C41", "#3949AB", "#C0CA33"];
 
 // Labels on the base map that can be added, and the category each one suggests.
@@ -145,7 +145,7 @@ function sourceFor(category) {
       layout: { "text-field": ["get", "point_count_abbreviated"], "text-font": ["Noto Sans Bold"], "text-size": 12, "text-allow-overlap": true } });
   }
   map.addLayer({ id: `${id}-points`, type: "circle", source: id, filter: ["!", ["has", "point_count"]],
-    paint: { "circle-color": ["get", "color"], "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, clustered ? 3.5 : 5, 10, clustered ? 7 : 9],
+    paint: { "circle-color": ["get", "color"], "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, clustered ? 3.5 : 7, 10, clustered ? 7 : 12],
       "circle-stroke-color": "#fff", "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 3, 1, 10, 2] } });
   map.addLayer({ id: `${id}-labels`, type: "symbol", source: id, minzoom: 13, filter: ["!", ["has", "point_count"]],
     layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Bold"], "text-size": 11, "text-offset": [0, 1], "text-anchor": "top", "text-optional": true },
