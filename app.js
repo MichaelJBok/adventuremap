@@ -1,0 +1,356 @@
+// Adventure Map: my places on a vector map. Anything named on the map can be clicked and added.
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const readJson = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } };
+const writeJson = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} };
+
+const PLACES_KEY = "adventuremap.places";
+const HIDDEN_KEY = "adventuremap.hiddenCategories";
+const VIEW_KEY = "adventuremap.view";
+const NEW_CATEGORY = "__new__";
+const LIST_LIMIT = 100;
+
+const BASE_COLORS = { "Points of Interest": "#F9A825", "Places": "#0288D1", "Geocaches": "#7CB342", "Dive Sites": "#E65100" };
+const EXTRA_COLORS = ["#8E24AA", "#D81B60", "#00897B", "#6D4C41", "#3949AB", "#C0CA33"];
+
+// Labels on the base map that can be added, and the category each one suggests.
+const ADDABLE = { poi: "Points of Interest", mountain_peak: "Points of Interest", park: "Points of Interest",
+  water_name: "Points of Interest", aerodrome_label: "Places", place: "Places" };
+
+let places = readJson(PLACES_KEY, []);
+let hidden = new Set(readJson(HIDDEN_KEY, []));
+let cloud = null; // set by sync.js while signed in
+let placing = false;
+let draft = null; // { marker, editing } while the form is open
+let popup = null;
+
+// --- Data ---
+function saveLocal() { writeJson(PLACES_KEY, places); }
+
+function addPlaces(list) {
+  const ids = new Set(list.map((p) => p.id));
+  places = [...places.filter((p) => !ids.has(p.id)), ...list];
+  saveLocal();
+  cloud?.save(list);
+  renderAll();
+}
+
+function removePlace(id) {
+  places = places.filter((p) => p.id !== id);
+  saveLocal();
+  cloud?.remove(id);
+  renderAll();
+}
+
+function categories() {
+  return [...new Set([...Object.keys(BASE_COLORS), ...places.map((p) => p.category)])];
+}
+
+function colorOf(category) {
+  if (BASE_COLORS[category]) return BASE_COLORS[category];
+  const extras = categories().filter((c) => !BASE_COLORS[c]);
+  return EXTRA_COLORS[extras.indexOf(category) % EXTRA_COLORS.length] ?? "#616161";
+}
+
+function metaLine(p) {
+  const when = p.date || p.dateText;
+  if (p.cache) return `${p.cache.type} · D${p.cache.difficulty}/T${p.cache.terrain} · by ${p.cache.owner}`;
+  return [p.category, when].filter(Boolean).join(" · ");
+}
+
+// Distance in metres; good enough for "is this the same spot".
+function metres(a, b) {
+  const x = (a.lon - b.lon) * Math.cos((a.lat * Math.PI) / 180);
+  return Math.hypot(x, a.lat - b.lat) * 111320;
+}
+
+function findSaved(name, lat, lon) {
+  const lower = name.toLowerCase();
+  return places.find((p) => p.name.toLowerCase() === lower && metres(p, { lat, lon }) < 100);
+}
+
+// --- Map ---
+const view = readJson(VIEW_KEY, { center: [13, 45], zoom: 3 });
+const map = new maplibregl.Map({ container: "map", style: "https://tiles.openfreemap.org/styles/liberty", ...view });
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }));
+map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }));
+map.on("moveend", () => writeJson(VIEW_KEY, { center: map.getCenter().toArray(), zoom: map.getZoom() }));
+
+class PinControl {
+  onAdd() {
+    const box = document.createElement("div");
+    box.className = "maplibregl-ctrl maplibregl-ctrl-group";
+    box.innerHTML = `<button type="button" class="place-btn" id="placeBtn" aria-label="Drop a pin" aria-pressed="false" title="Drop a pin">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg></button>`;
+    box.firstElementChild.onclick = () => setPlacing(!placing);
+    return box;
+  }
+  onRemove() {}
+}
+map.addControl(new PinControl());
+
+function setPlacing(on) {
+  placing = on;
+  $("map").classList.toggle("placing", on);
+  $("placeBtn").classList.toggle("active", on);
+  $("placeBtn").setAttribute("aria-pressed", on);
+}
+
+const BASEMAPS = {
+  topo: { tiles: ["https://a.tile.opentopomap.org/{z}/{x}/{y}.png", "https://b.tile.opentopomap.org/{z}/{x}/{y}.png"],
+    maxzoom: 17, attribution: "&copy; OpenTopoMap" },
+  satellite: { tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+    maxzoom: 18, attribution: "&copy; Esri" },
+};
+
+function setBasemap(name) {
+  if (map.getLayer("basemap")) { map.removeLayer("basemap"); map.removeSource("basemap"); }
+  if (!name) return;
+  map.addSource("basemap", { type: "raster", tileSize: 256, ...BASEMAPS[name] });
+  // Below the labels, so they stay on top and stay clickable.
+  const firstLabel = map.getStyle().layers.find((l) => l.type === "symbol")?.id;
+  map.addLayer({ id: "basemap", type: "raster", source: "basemap" }, firstLabel);
+}
+
+function placesGeoJson() {
+  return {
+    type: "FeatureCollection",
+    features: places.filter((p) => !hidden.has(p.category)).map((p) => ({
+      type: "Feature",
+      geometry: { type: "Point", coordinates: [p.lon, p.lat] },
+      properties: { id: p.id, name: p.name, color: colorOf(p.category) },
+    })),
+  };
+}
+
+function drawPlaces() { map.getSource("mine")?.setData(placesGeoJson()); }
+
+map.on("load", () => {
+  // Summits are in the tiles, but this style doesn't draw them.
+  map.addLayer({ id: "peak-dots", type: "circle", source: "openmaptiles", "source-layer": "mountain_peak", minzoom: 10,
+    filter: ["==", ["get", "class"], "peak"],
+    paint: { "circle-radius": 3, "circle-color": "#6d5a43", "circle-stroke-color": "#fff", "circle-stroke-width": 1 } });
+  map.addLayer({ id: "peak-labels", type: "symbol", source: "openmaptiles", "source-layer": "mountain_peak", minzoom: 11,
+    filter: ["==", ["get", "class"], "peak"],
+    layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 11, "text-offset": [0, 0.9], "text-anchor": "top" },
+    paint: { "text-color": "#6d5a43", "text-halo-color": "#fff", "text-halo-width": 1.2 } });
+
+  map.addSource("mine", { type: "geojson", data: placesGeoJson(), cluster: true, clusterRadius: 42, clusterMaxZoom: 11 });
+  map.addLayer({ id: "mine-clusters", type: "circle", source: "mine", filter: ["has", "point_count"],
+    paint: { "circle-color": "#2b2a26", "circle-opacity": 0.82, "circle-stroke-color": "#fff", "circle-stroke-width": 2,
+      "circle-radius": ["step", ["get", "point_count"], 13, 25, 17, 200, 22] } });
+  map.addLayer({ id: "mine-counts", type: "symbol", source: "mine", filter: ["has", "point_count"],
+    layout: { "text-field": ["get", "point_count_abbreviated"], "text-font": ["Noto Sans Bold"], "text-size": 12, "text-allow-overlap": true },
+    paint: { "text-color": "#fff" } });
+  map.addLayer({ id: "mine-points", type: "circle", source: "mine", filter: ["!", ["has", "point_count"]],
+    paint: { "circle-color": ["get", "color"], "circle-radius": 7, "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
+  map.addLayer({ id: "mine-labels", type: "symbol", source: "mine", minzoom: 13, filter: ["!", ["has", "point_count"]],
+    layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Bold"], "text-size": 11, "text-offset": [0, 1], "text-anchor": "top", "text-optional": true },
+    paint: { "text-color": "#2b2a26", "text-halo-color": "#fff", "text-halo-width": 1.4 } });
+});
+
+// A small box rather than a point, so a fingertip can hit an icon.
+const near = (p) => [[p.x - 8, p.y - 8], [p.x + 8, p.y + 8]];
+const addableLayers = () => map.getStyle().layers.filter((l) => l.type === "symbol" && ADDABLE[l["source-layer"]]).map((l) => l.id);
+const labelAt = (p) => map.queryRenderedFeatures(near(p), { layers: addableLayers() }).find((f) => f.properties.name);
+const mineAt = (p) => map.queryRenderedFeatures(near(p), { layers: ["mine-points", "mine-clusters"] })[0];
+
+map.on("mousemove", (e) => {
+  if (placing || draft) return;
+  map.getCanvas().style.cursor = mineAt(e.point) || labelAt(e.point) ? "pointer" : "";
+});
+
+map.on("click", async (e) => {
+  if (draft) { moveDraft(e.lngLat); return; }
+  if (placing) { setPlacing(false); openForm({ lat: e.lngLat.lat, lon: e.lngLat.lng }); return; }
+  const mine = mineAt(e.point);
+  if (mine?.properties.cluster) {
+    const zoom = await map.getSource("mine").getClusterExpansionZoom(mine.properties.cluster_id);
+    map.easeTo({ center: mine.geometry.coordinates, zoom: zoom + 0.5 });
+  } else if (mine) {
+    showPlace(mine.properties.id);
+  } else {
+    const label = labelAt(e.point);
+    if (label) showLabel(label, e.lngLat);
+    else popup?.remove();
+  }
+});
+
+// --- Popups ---
+function openPopup(lngLat, html) {
+  popup?.remove();
+  popup = new maplibregl.Popup({ offset: 12, maxWidth: "280px" }).setLngLat(lngLat).setHTML(html).addTo(map);
+  return popup.getElement();
+}
+
+function showLabel(f, clicked) {
+  const [lon, lat] = f.geometry.type === "Point" ? f.geometry.coordinates : [clicked.lng, clicked.lat];
+  const name = f.properties.name;
+  const kind = (f.properties.subclass || f.properties.class || "").replaceAll("_", " ");
+  const saved = findSaved(name, lat, lon);
+  if (saved) { showPlace(saved.id); return; }
+  const suggested = ADDABLE[f.sourceLayer];
+  const options = categories().map((c) => `<option${c === suggested ? " selected" : ""}>${esc(c)}</option>`).join("");
+  const el = openPopup([lon, lat], `<div class="pop-title">${esc(name)}</div>
+    <div class="pop-meta">${esc(kind)}</div>
+    <div class="row"><select id="popCategory" aria-label="Category">${options}</select>
+    <button type="button" class="primary" id="popAdd">Add to my places</button></div>`);
+  el.querySelector("#popAdd").onclick = () => {
+    const place = { id: `p-${Date.now().toString(36)}`, lat, lon, name, category: el.querySelector("#popCategory").value,
+      date: "", notes: "", link: "", source: "Map", kind, addedAt: new Date().toISOString() };
+    addPlaces([place]);
+    showPlace(place.id);
+  };
+}
+
+function showPlace(id) {
+  const p = places.find((x) => x.id === id);
+  if (!p) return;
+  const link = /^https?:\/\//.test(p.link || "") ? `<div class="pop-meta"><a href="${esc(p.link)}" target="_blank" rel="noopener">Open link</a></div>` : "";
+  const notes = p.notes ? `<p class="pop-notes">${esc(p.notes)}</p>` : "";
+  const el = openPopup([p.lon, p.lat], `<div class="pop-title">${esc(p.name)}</div>
+    <div class="pop-meta">${esc(metaLine(p))}</div>${link}${notes}
+    <div class="row"><button type="button" id="popEdit">Edit</button>
+    <button type="button" id="popDelete">Delete</button></div>`);
+  el.querySelector("#popEdit").onclick = () => { popup.remove(); openForm(p, p); };
+  el.querySelector("#popDelete").onclick = () => {
+    if (confirm(`Delete “${p.name}”?`)) { popup.remove(); removePlace(p.id); }
+  };
+}
+
+function focusPlace(p) {
+  map.flyTo({ center: [p.lon, p.lat], zoom: Math.max(map.getZoom(), 13) });
+  showPlace(p.id);
+}
+
+// --- Form ---
+function renderCategorySelect(selected) {
+  $("fCategory").innerHTML = categories().map((c) => `<option${c === selected ? " selected" : ""}>${esc(c)}</option>`).join("")
+    + `<option value="${NEW_CATEGORY}">New category…</option>`;
+  $("fOtherWrap").hidden = true;
+}
+
+function moveDraft(lngLat) { draft.marker.setLngLat(lngLat); showDraftPosition(); }
+
+function showDraftPosition() {
+  const { lat, lng } = draft.marker.getLngLat();
+  $("fPos").value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+}
+
+function openForm(at, editing = null) {
+  closeForm();
+  const marker = new maplibregl.Marker({ draggable: true, color: "#1f6f8b" }).setLngLat([at.lon, at.lat]).addTo(map);
+  marker.on("dragend", showDraftPosition);
+  draft = { marker, editing };
+  map.getCanvas().style.cursor = "crosshair";
+  $("formTitle").textContent = editing ? "Edit place" : "New place";
+  $("fName").value = editing?.name ?? "";
+  renderCategorySelect(editing?.category ?? "Points of Interest");
+  $("fDate").value = editing?.date ?? "";
+  $("fLink").value = editing?.link ?? "";
+  $("fNotes").value = editing?.notes ?? "";
+  showDraftPosition();
+  $("form").hidden = false;
+  $("form").scrollIntoView({ block: "nearest" });
+  $("fName").focus();
+}
+
+function closeForm() {
+  draft?.marker.remove();
+  draft = null;
+  map.getCanvas().style.cursor = "";
+  $("form").hidden = true;
+}
+
+$("fCategory").onchange = () => { $("fOtherWrap").hidden = $("fCategory").value !== NEW_CATEGORY; };
+$("fCancel").onclick = closeForm;
+$("form").onsubmit = (e) => {
+  e.preventDefault();
+  const custom = $("fCategory").value === NEW_CATEGORY;
+  const category = custom ? $("fOther").value.trim() : $("fCategory").value;
+  if (!category) { $("fOther").focus(); return; }
+  const { lat, lng } = draft.marker.getLngLat();
+  const place = {
+    ...(draft.editing ?? { id: `p-${Date.now().toString(36)}`, source: "Pin", addedAt: new Date().toISOString() }),
+    lat: +lat.toFixed(6), lon: +lng.toFixed(6),
+    name: $("fName").value.trim(), category,
+    date: $("fDate").value, link: $("fLink").value.trim(), notes: $("fNotes").value.trim(),
+  };
+  closeForm();
+  addPlaces([place]);
+  showPlace(place.id);
+};
+
+// --- Side panel ---
+function renderCategories() {
+  const counts = {};
+  places.forEach((p) => { counts[p.category] = (counts[p.category] ?? 0) + 1; });
+  $("catList").innerHTML = categories().map((c) => `<li><label>
+    <input type="checkbox" data-cat="${esc(c)}"${hidden.has(c) ? "" : " checked"}>
+    <span class="dot" style="--c:${colorOf(c)}"></span><span>${esc(c)}</span>
+    <span class="count">${(counts[c] ?? 0).toLocaleString("en-US")}</span></label></li>`).join("");
+}
+
+$("catList").onchange = (e) => {
+  const c = e.target.dataset.cat;
+  if (e.target.checked) hidden.delete(c); else hidden.add(c);
+  writeJson(HIDDEN_KEY, [...hidden]);
+  drawPlaces();
+  renderList();
+};
+
+function matchingPlaces() {
+  const q = $("search").value.trim().toLowerCase();
+  return places
+    .filter((p) => !hidden.has(p.category))
+    .filter((p) => !q || p.name.toLowerCase().includes(q) || (p.notes || "").toLowerCase().includes(q))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || "") || a.name.localeCompare(b.name));
+}
+
+function renderList() {
+  const found = matchingPlaces();
+  const shown = found.slice(0, LIST_LIMIT);
+  $("placeList").replaceChildren(...shown.map((p) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="dot" style="--c:${colorOf(p.category)}"></span><span>${esc(p.name)}<small>${esc(metaLine(p))}</small></span>`;
+    li.onclick = () => focusPlace(p);
+    return li;
+  }));
+  $("listStatus").textContent = found.length > LIST_LIMIT
+    ? `Showing ${LIST_LIMIT} of ${found.length.toLocaleString("en-US")}. Search to narrow the list.`
+    : found.length ? "" : "No places match.";
+}
+$("search").oninput = renderList;
+
+function renderAll() { drawPlaces(); renderCategories(); renderList(); }
+
+$("basemap").onchange = () => setBasemap($("basemap").value);
+
+// --- Backup ---
+$("exportBtn").onclick = () => {
+  const blob = new Blob([JSON.stringify({ places }, null, 1)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `adventure-map-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+$("importBtn").onclick = () => $("importFile").click();
+$("importFile").onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const list = (data.places ?? []).filter((p) => p.id && p.name && p.category && Number.isFinite(p.lat) && Number.isFinite(p.lon));
+    if (!list.length) throw new Error("no places in this file");
+    addPlaces(list);
+    $("importStatus").textContent = `Imported ${list.length.toLocaleString("en-US")} places.`;
+  } catch (err) {
+    $("importStatus").textContent = `Import failed: ${err.message}`;
+  }
+};
+
+renderCategories();
+renderList();
