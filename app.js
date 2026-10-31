@@ -17,6 +17,7 @@ const TRACK_KINDS = [
 const LIST_LIMIT = 100;
 const ALWAYS_VISIBLE = "Places"; // never consolidated into circles
 
+const GEOCACHES = "Geocaches";
 const MUSHROOMS = "Mushrooms"; // read-only layer: finds are kept and edited in Svampkartan
 const SVAMPKARTAN_KEY = "svampkartan.spots"; // same web address, so the same browser storage
 const BASE_COLORS = { "Places": "#0288D1", "Points of Interest": "#F9A825", "Geocaches": "#7CB342", "Dive Sites": "#E65100", [MUSHROOMS]: "#8E24AA" };
@@ -484,12 +485,43 @@ $("exportBtn").onclick = () => {
   URL.revokeObjectURL(a.href);
 };
 
+// A Geocaching "My Finds" file. The date on each cache is when it was placed; the find date is in my log.
+function parseFinds(text) {
+  const doc = new DOMParser().parseFromString(text, "application/xml");
+  const inner = (el, tag) => el.getElementsByTagNameNS("*", tag)[0]?.textContent.trim() ?? "";
+  return [...doc.getElementsByTagNameNS("*", "wpt")].map((w) => {
+    const code = inner(w, "name");
+    const found = [...w.getElementsByTagNameNS("*", "log")].filter((l) => inner(l, "type") === "Found it")
+      .map((l) => inner(l, "date").slice(0, 10)).sort();
+    return { id: `gc-${code.toLowerCase()}`, lat: Number(w.getAttribute("lat")), lon: Number(w.getAttribute("lon")),
+      name: `${inner(w, "urlname")} (${code})`, category: GEOCACHES, date: found[0] ?? "", notes: "",
+      link: `https://coord.info/${code}`, source: "My Finds",
+      cache: { code, owner: inner(w, "owner"), type: inner(w, "type").replace("Geocache|", ""),
+        difficulty: Number(inner(w, "difficulty")), terrain: Number(inner(w, "terrain")) } };
+  });
+}
+
+// Only adds what's new, so a cache already here keeps any edits and only gains a missing date.
+function importFinds(finds) {
+  if (!finds.length) throw new Error("no geocaches in this file");
+  const current = new Map(places.map((p) => [p.id, p]));
+  const added = finds.filter((f) => !current.has(f.id));
+  const dated = finds.filter((f) => f.date && current.has(f.id) && !current.get(f.id).date)
+    .map((f) => ({ ...current.get(f.id), date: f.date }));
+  addPlaces([...added, ...dated]);
+  return `${finds.length.toLocaleString("en-US")} finds in the file: ${added.length.toLocaleString("en-US")} new, ${dated.length.toLocaleString("en-US")} dates filled in.`;
+}
+
 $("importBtn").onclick = () => $("importFile").click();
 $("importFile").onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
   try {
+    if (file.name.toLowerCase().endsWith(".gpx")) {
+      $("importStatus").textContent = importFinds(parseFinds(await file.text()));
+      return;
+    }
     const data = JSON.parse(await file.text());
     const list = (data.places ?? []).filter((p) => p.id && p.name && p.category && Number.isFinite(p.lat) && Number.isFinite(p.lon));
     if (!list.length) throw new Error("no places in this file");
