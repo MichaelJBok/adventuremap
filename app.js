@@ -9,6 +9,11 @@ const HIDDEN_KEY = "adventuremap.hiddenCategories";
 const VIEW_KEY = "adventuremap.view";
 const MENU_KEY = "adventuremap.menuHidden";
 const NEW_CATEGORY = "__new__";
+const TRACK_KINDS = [
+  { name: "Runs", color: "#D81B60", sports: ["Run", "TrailRun"] },
+  { name: "Hikes and walks", color: "#00897B", sports: ["Hike", "Walk"] },
+  { name: "Other tracks", color: "#546E7A" },
+];
 const LIST_LIMIT = 100;
 const ALWAYS_VISIBLE = "Places"; // never consolidated into circles
 
@@ -23,6 +28,7 @@ const ADDABLE = { poi: "Points of Interest", mountain_peak: "Points of Interest"
 
 let places = readJson(PLACES_KEY, []);
 let mushrooms = readJson(SVAMPKARTAN_KEY, []).map(toMushroom);
+let tracks = [];
 let hidden = new Set(readJson(HIDDEN_KEY, []));
 let cloud = null; // set by sync.js while signed in
 let placing = false;
@@ -66,6 +72,35 @@ function removePlace(id) {
 
 function categories() {
   return [...new Set([...Object.keys(BASE_COLORS), ...places.map((p) => p.category)])];
+}
+
+// Encoded route lines from Strava, as [lon, lat] pairs.
+function decodePolyline(text) {
+  const coords = [];
+  let i = 0, lat = 0, lon = 0;
+  const next = () => {
+    let shift = 0, value = 0, byte;
+    do {
+      byte = text.charCodeAt(i++) - 63;
+      value |= (byte & 31) << shift;
+      shift += 5;
+    } while (byte >= 32);
+    return value & 1 ? ~(value >> 1) : value >> 1;
+  };
+  while (i < text.length) {
+    lat += next();
+    lon += next();
+    coords.push([lon / 1e5, lat / 1e5]);
+  }
+  return coords;
+}
+
+const trackKind = (t) => TRACK_KINDS.find((k) => k.sports?.includes(t.sportType)) ?? TRACK_KINDS.at(-1);
+
+function setTracks(list) {
+  tracks = list.map((t) => ({ ...t, kind: trackKind(t), coords: decodePolyline(t.polyline) }));
+  drawTracks();
+  renderTrackKinds();
 }
 
 const addableCategories = () => categories().filter((c) => c !== MUSHROOMS);
@@ -203,6 +238,17 @@ function sourceFor(category) {
   return id;
 }
 
+function drawTracks() {
+  map.getSource("tracks")?.setData({
+    type: "FeatureCollection",
+    features: tracks.filter((t) => !hidden.has(t.kind.name)).map((t) => ({
+      type: "Feature",
+      geometry: { type: "LineString", coordinates: t.coords },
+      properties: { color: t.kind.color },
+    })),
+  });
+}
+
 function drawPlaces() {
   if (!map.getLayer("peak-dots")) return; // the map hasn't finished loading
   categories().forEach(sourceFor);
@@ -215,6 +261,12 @@ function drawPlaces() {
 }
 
 map.on("load", () => {
+  // Thin and see-through, so paths travelled many times build up and stand out.
+  map.addSource("tracks", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({ id: "tracks", type: "line", source: "tracks", layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": ["get", "color"], "line-opacity": 0.45,
+      "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 14, 2.5] } });
+  drawTracks();
   // Summits are in the tiles, but this style doesn't draw them.
   map.addLayer({ id: "peak-dots", type: "circle", source: "openmaptiles", "source-layer": "mountain_peak", minzoom: 10,
     filter: ["==", ["get", "class"], "peak"],
@@ -379,11 +431,19 @@ function renderCategories() {
     <span class="count">${(counts[c] ?? 0).toLocaleString("en-US")}</span></label></li>`).join("");
 }
 
-$("catList").onchange = (e) => {
+function renderTrackKinds() {
+  $("trackList").innerHTML = TRACK_KINDS.map((k) => `<li><label>
+    <input type="checkbox" data-cat="${esc(k.name)}"${hidden.has(k.name) ? "" : " checked"}>
+    <span class="dot" style="--c:${k.color}"></span><span>${esc(k.name)}</span>
+    <span class="count">${tracks.filter((t) => t.kind === k).length.toLocaleString("en-US")}</span></label></li>`).join("");
+}
+
+$("catList").onchange = $("trackList").onchange = (e) => {
   const c = e.target.dataset.cat;
   if (e.target.checked) hidden.delete(c); else hidden.add(c);
   writeJson(HIDDEN_KEY, [...hidden]);
   drawPlaces();
+  drawTracks();
   renderList();
 };
 
@@ -441,4 +501,5 @@ $("importFile").onchange = async (e) => {
 };
 
 renderCategories();
+renderTrackKinds();
 renderList();

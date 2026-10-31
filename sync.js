@@ -71,8 +71,9 @@ const UPLOADED_KEY = "adventuremap.uploadedTo"; // accounts this device has alre
         // Just signed out: don't leave this account's places behind on the device.
         cloud = null;
         places = [];
-        saveLocal(); setMushrooms([]);
+        saveLocal(); setMushrooms([]); setTracks([]);
       }
+      renderStrava(null, false);
       setStatus("");
       return;
     }
@@ -99,6 +100,8 @@ const UPLOADED_KEY = "adventuremap.uploadedTo"; // accounts this device has alre
     }
 
     setStatus("Loading your places…");
+    unsubscribers.push(startStrava(db, db.collection("users").doc(user.uid)));
+
     // Mushroom finds are read straight from Svampkartan's collection, so new finds appear here too.
     const finds = db.collection("users").doc(user.uid).collection("spots");
     unsubscribers.push(finds.onSnapshot((snap) => setMushrooms(snap.docs.map((d) => d.data())), showError));

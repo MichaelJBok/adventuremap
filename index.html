@@ -34,9 +34,9 @@
   .row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; align-items:center; }
 
   /* Category filter */
-  #catList { list-style:none; padding:0; margin:0; }
-  #catList label { display:grid; grid-template-columns:auto auto 1fr auto; gap:8px; align-items:center; margin:0; padding:5px 0; font-weight:normal; font-size:14px; }
-  #catList input { width:auto; margin:0; }
+  .cat-list { list-style:none; padding:0; margin:0; }
+  .cat-list label { display:grid; grid-template-columns:auto auto 1fr auto; gap:8px; align-items:center; margin:0; padding:5px 0; font-weight:normal; font-size:14px; }
+  .cat-list input { width:auto; margin:0; }
   .dot { width:12px; height:12px; border-radius:50%; background:var(--c); border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.25); }
   .count { color:var(--muted); font-variant-numeric:tabular-nums; }
 
@@ -111,7 +111,23 @@
     </select>
 
     <h2>Categories</h2>
-    <ul id="catList"></ul>
+    <ul id="catList" class="cat-list"></ul>
+
+    <h2>Tracks</h2>
+    <ul id="trackList" class="cat-list"></ul>
+    <form id="stravaSetup" hidden>
+      <p class="hint">Create an API app at strava.com/settings/api with the callback domain <b>michaeljbok.github.io</b>, then paste its details here. They stay private to your account.</p>
+      <label for="sClientId">Client ID</label>
+      <input id="sClientId" inputmode="numeric" autocomplete="off" required>
+      <label for="sClientSecret">Client Secret</label>
+      <input id="sClientSecret" type="password" autocomplete="off" required>
+      <div class="row"><button type="submit" class="primary">Connect to Strava</button></div>
+    </form>
+    <div class="row" id="stravaActions" hidden>
+      <button type="button" id="stravaSync">Sync now</button>
+      <button type="button" id="stravaDisconnect">Disconnect</button>
+    </div>
+    <p class="hint" id="stravaStatus" aria-live="polite" style="margin-top:8px"></p>
 
     <h2>My places</h2>
     <input id="search" type="search" placeholder="Search names and notes" aria-label="Search my places">
@@ -134,6 +150,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="strava.js"></script>
 <script src="sync.js"></script>
 </body>
 </html>
