@@ -18,6 +18,9 @@ const HEAT_STYLES = {
   magenta: { name: "Magenta", line: "#C2185B", ramp: ["rgba(74,20,140,0.5)", "#7B1FA2", "#C2185B", "#F06292", "#FCE4EC"] },
   ink: { name: "Ink", line: "#212121", ramp: ["rgba(33,33,33,0.15)", "rgba(33,33,33,0.3)", "rgba(33,33,33,0.5)", "rgba(33,33,33,0.7)", "rgba(0,0,0,0.9)"] },
 };
+// OpenFreeMap's styles share their tiles, fonts and icons, so my own layers carry over between them.
+const VECTOR_STYLES = { light: "positron", dark: "dark" };
+const styleUrl = (base) => `https://tiles.openfreemap.org/styles/${VECTOR_STYLES[base] ?? "liberty"}`;
 const HEAT_WIDTHS = { thin: 0.6, normal: 1, wide: 1.7 };
 const DEFAULT_DISPLAY = { colors: {}, sizes: {}, opacities: {}, solid: {}, base: {}, heatStyle: "fire", heatWidth: "normal" };
 const HEAT_STEP_M = 50; // heatmap points are spaced evenly along each track, so time spent in one spot doesn't count extra
@@ -203,7 +206,8 @@ function findSaved(name, lat, lon) {
 
 // --- Map ---
 const view = readJson(VIEW_KEY, { center: [13, 45], zoom: 3 });
-const map = new maplibregl.Map({ container: "map", style: "https://tiles.openfreemap.org/styles/liberty", ...view });
+let currentStyle = styleUrl(display.base?.map);
+const map = new maplibregl.Map({ container: "map", style: currentStyle, ...view });
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }));
 map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }));
@@ -274,6 +278,7 @@ const OVERLAYS = {
 const DEFAULT_BASE = { map: "", labels: true, hillshade: false, hiking: false, cycling: false, fade: 0 };
 const baseOptions = () => ({ ...DEFAULT_BASE, ...display.base });
 let baseLabels = []; // the base map's own label layers, found when it loads
+let baseLayerIds = new Set(); // every layer of the base style, so a style swap knows which layers are mine
 let currentBasemap = "";
 
 function setBasemap(name) {
@@ -300,6 +305,31 @@ function setOverlay(id, on) {
   }
 }
 
+// Swaps the vector base style, keeping my own sources and layers. Mine that belong under the labels
+// (raster base map, hillshade, fade) go under the new style's labels; the rest go on top as before.
+function setVectorStyle(url) {
+  currentStyle = url;
+  const under = new Set(["basemap", "hillshade", "fade"]);
+  let nextIds;
+  map.setStyle(url, {
+    diff: false,
+    transformStyle: (previous, next) => {
+      nextIds = new Set(next.layers.map((l) => l.id));
+      const mine = previous.layers.filter((l) => !baseLayerIds.has(l.id));
+      const layers = [...next.layers];
+      const firstLabel = layers.findIndex((l) => l.type === "symbol");
+      layers.splice(firstLabel < 0 ? layers.length : firstLabel, 0, ...mine.filter((l) => under.has(l.id)));
+      layers.push(...mine.filter((l) => !under.has(l.id)));
+      return { ...next, sources: { ...previous.sources, ...next.sources }, layers };
+    },
+  });
+  map.once("style.load", () => {
+    baseLayerIds = nextIds;
+    baseLabels = [...map.getStyle().layers.filter((l) => l.type === "symbol" && nextIds.has(l.id)).map((l) => l.id), "peak-labels"];
+    applyBase();
+  });
+}
+
 function renderBaseControls() {
   const b = baseOptions();
   $("basemap").value = b.map;
@@ -311,10 +341,13 @@ function applyBase() {
   renderBaseControls();
   if (!map.getLayer("fade")) return; // the map hasn't finished loading
   const b = baseOptions();
-  if (currentBasemap !== b.map) setBasemap(b.map);
+  if (currentStyle !== styleUrl(b.map)) { setVectorStyle(styleUrl(b.map)); return; } // applyBase runs again once it's loaded
+  const raster = BASEMAPS[b.map] ? b.map : "";
+  if (currentBasemap !== raster) setBasemap(raster);
   for (const id of Object.keys(OVERLAYS)) setOverlay(id, b[id]);
   for (const id of baseLabels) map.setLayoutProperty(id, "visibility", b.labels ? "visible" : "none");
   map.setPaintProperty("fade", "fill-opacity", b.fade);
+  map.setPaintProperty("fade", "fill-color", b.map === "dark" ? "#000" : "#fff"); // a dark map fades toward black
 }
 
 function textOn(hex) {
@@ -413,6 +446,7 @@ function drawPlaces() {
 }
 
 map.on("load", () => {
+  baseLayerIds = new Set(map.getStyle().layers.map((l) => l.id));
   baseLabels = map.getStyle().layers.filter((l) => l.type === "symbol").map((l) => l.id);
   // A white wash between the base map and its labels, to make tracks and places stand out.
   map.addSource("fade", { type: "geojson", data: { type: "Feature", properties: {},
