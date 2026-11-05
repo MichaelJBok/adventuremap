@@ -38,10 +38,11 @@
   .cat-list label { display:grid; grid-template-columns:auto auto 1fr auto; gap:8px; align-items:center; margin:0; padding:5px 0; font-weight:normal; font-size:14px; }
   .cat-list input { width:auto; margin:0; }
   .dot { width:12px; height:12px; border-radius:50%; background:var(--c); border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.25); }
-  .cat-list input.dot { appearance:none; -webkit-appearance:none; width:18px; height:18px; padding:0; border:2px solid #fff; cursor:pointer; background:none; }
-  .cat-list input.dot::-webkit-color-swatch-wrapper { padding:0; }
-  .cat-list input.dot::-webkit-color-swatch { border:0; border-radius:50%; }
-  .cat-list input.dot::-moz-color-swatch { border:0; border-radius:50%; }
+  .cat-list button.dot { width:18px; height:18px; padding:0; cursor:pointer; }
+  #stylePanel { position:fixed; z-index:10; width:220px; padding:12px; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,.15); }
+  #stylePanel h3 { margin:0 0 6px; font-size:14px; }
+  #stylePanel input[type=color] { height:34px; padding:2px; }
+  #stylePanel input[type=range] { padding:0; border:0; }
   #heatOptions select { flex:1; width:auto; }
   button.link { border:0; background:none; padding:2px 0; color:var(--accent); font-size:12px; }
   .count { color:var(--muted); font-variant-numeric:tabular-nums; }
@@ -118,7 +119,7 @@
 
     <h2>Categories</h2>
     <ul id="catList" class="cat-list"></ul>
-    <button type="button" class="link" id="resetColors" hidden>Reset colours</button>
+    <button type="button" class="link" id="resetColors" hidden>Reset colours and sizes</button>
 
     <h2>Tracks</h2>
     <select id="trackView" aria-label="Show tracks as" style="margin-bottom:6px">
@@ -162,6 +163,14 @@
     <p class="hint" style="margin-top:12px">Signed out, places stay only in this browser. Export now and then as a backup. To update geocaches, import a Geocaching My Finds GPX file; only new finds are added.</p>
   </aside>
   <div id="map"></div>
+  <div id="stylePanel" role="dialog" aria-labelledby="styleTitle" hidden>
+    <h3 id="styleTitle"></h3>
+    <label for="styleColor">Colour</label>
+    <input type="color" id="styleColor">
+    <label for="styleSize" id="styleSizeLabel">Size</label>
+    <input type="range" id="styleSize" min="0.5" max="2.5" step="0.1">
+    <div class="row"><button type="button" id="styleDone">Done</button></div>
+  </div>
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>

@@ -19,7 +19,7 @@ const HEAT_STYLES = {
   ink: { name: "Ink", line: "#212121", ramp: ["rgba(33,33,33,0.15)", "rgba(33,33,33,0.3)", "rgba(33,33,33,0.5)", "rgba(33,33,33,0.7)", "rgba(0,0,0,0.9)"] },
 };
 const HEAT_WIDTHS = { thin: 0.6, normal: 1, wide: 1.7 };
-const DEFAULT_DISPLAY = { colors: {}, heatStyle: "fire", heatWidth: "normal" };
+const DEFAULT_DISPLAY = { colors: {}, sizes: {}, heatStyle: "fire", heatWidth: "normal" };
 const HEAT_STEP_M = 50; // heatmap points are spaced evenly along each track, so time spent in one spot doesn't count extra
 const NEW_CATEGORY = "__new__";
 const TRACK_KINDS = [
@@ -143,6 +143,7 @@ function alongLine(coords) {
 const addableCategories = () => categories().filter((c) => c !== MUSHROOMS);
 
 const kindColor = (k) => display.colors[k.name] ?? k.color;
+const sizeOf = (name) => display.sizes[name] ?? 1; // marker size for a category, line thickness for a kind of track
 
 function colorOf(category) {
   if (display.colors[category]) return display.colors[category];
@@ -287,7 +288,7 @@ function drawTracks() {
     features: shown.map((t) => ({
       type: "Feature",
       geometry: { type: "MultiLineString", coordinates: t.lines },
-      properties: { color: kindColor(t.kind) },
+      properties: { color: kindColor(t.kind), width: sizeOf(t.kind.name) },
     })),
   });
   if (heat && !heatPoints) {
@@ -317,7 +318,12 @@ function drawPlaces() {
   categories().forEach(sourceFor);
   for (const [category, id] of sourceIds) {
     map.getSource(id).setData(placesGeoJson(category));
-    if (category === ALWAYS_VISIBLE) continue;
+    const size = sizeOf(category);
+    const clustered = category !== ALWAYS_VISIBLE;
+    map.setPaintProperty(`${id}-points`, "circle-radius",
+      ["interpolate", ["linear"], ["zoom"], 3, (clustered ? 3.5 : 7) * size, 10, (clustered ? 7 : 12) * size]);
+    if (!clustered) continue;
+    map.setPaintProperty(`${id}-clusters`, "circle-radius", ["step", ["get", "point_count"], 13 * size, 25, 17 * size, 200, 22 * size]);
     map.setPaintProperty(`${id}-clusters`, "circle-color", colorOf(category));
     map.setPaintProperty(`${id}-counts`, "text-color", textOn(colorOf(category)));
   }
@@ -328,7 +334,7 @@ map.on("load", () => {
   map.addSource("tracks", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "tracks", type: "line", source: "tracks", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": ["get", "color"], "line-opacity": 0.45,
-      "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 14, 2.5] } });
+      "line-width": ["interpolate", ["linear"], ["zoom"], 5, ["*", 1, ["get", "width"]], 14, ["*", 2.5, ["get", "width"]]] } });
   // Heat builds where tracks overlap, from one pass through to the most worn paths. drawTracks sets its colours.
   map.addSource("heat", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "heat", type: "heatmap", source: "heat", maxzoom: 13, layout: { visibility: "none" },
@@ -492,9 +498,31 @@ $("form").onsubmit = (e) => {
 };
 
 // --- Side panel ---
-// The coloured dot is a colour input, so clicking it picks a new colour instead of ticking the box.
+// The coloured dot is a button, so clicking it opens the style panel instead of ticking the box.
 const colorPicker = (name, color) =>
-  `<input type="color" class="dot" value="${color}" data-color="${esc(name)}" aria-label="Colour for ${esc(name)}" title="Change colour">`;
+  `<button type="button" class="dot" style="--c:${color}" data-style="${esc(name)}" aria-label="Style for ${esc(name)}" title="Change colour and size"></button>`;
+
+let styling = null; // the category or kind of track the style panel is changing
+
+function openStylePanel(button) {
+  styling = button.dataset.style;
+  const isTrack = !!TRACK_KINDS.find((k) => k.name === styling);
+  $("styleTitle").textContent = styling;
+  $("styleSizeLabel").textContent = isTrack ? "Line thickness" : "Marker size";
+  $("styleColor").value = isTrack ? kindColor(TRACK_KINDS.find((k) => k.name === styling)) : colorOf(styling);
+  $("styleSize").value = sizeOf(styling);
+  const panel = $("stylePanel");
+  panel.hidden = false;
+  const at = button.getBoundingClientRect();
+  panel.style.left = `${Math.min(at.left, innerWidth - panel.offsetWidth - 8)}px`;
+  panel.style.top = `${Math.min(at.bottom + 6, innerHeight - panel.offsetHeight - 8)}px`;
+  $("styleColor").focus();
+}
+
+function closeStylePanel() {
+  $("stylePanel").hidden = true;
+  styling = null;
+}
 
 function setDisplay(change, fromAccount = false) {
   display = { ...DEFAULT_DISPLAY, ...display, ...change };
@@ -502,7 +530,7 @@ function setDisplay(change, fromAccount = false) {
   if (!fromAccount) cloud?.saveDisplay(display);
   $("heatStyle").value = display.heatStyle;
   $("heatWidth").value = display.heatWidth;
-  $("resetColors").hidden = !Object.keys(display.colors).length;
+  $("resetColors").hidden = !Object.keys(display.colors).length && !Object.keys(display.sizes).length;
   renderAll();
   renderTrackKinds();
   drawTracks();
@@ -528,7 +556,18 @@ $("trackView").value = trackView;
 $("heatStyle").append(...Object.entries(HEAT_STYLES).map(([id, s]) => new Option(s.name, id)));
 $("heatStyle").onchange = () => setDisplay({ heatStyle: $("heatStyle").value });
 $("heatWidth").onchange = () => setDisplay({ heatWidth: $("heatWidth").value });
-$("resetColors").onclick = () => setDisplay({ colors: {} });
+$("resetColors").onclick = () => setDisplay({ colors: {}, sizes: {} });
+$("styleColor").oninput = () => setDisplay({ colors: { ...display.colors, [styling]: $("styleColor").value } });
+$("styleSize").oninput = () => setDisplay({ sizes: { ...display.sizes, [styling]: Number($("styleSize").value) } });
+$("styleDone").onclick = closeStylePanel;
+$("catList").onclick = $("trackList").onclick = (e) => {
+  const button = e.target.closest("button[data-style]");
+  if (button) openStylePanel(button);
+};
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && styling) closeStylePanel(); });
+document.addEventListener("pointerdown", (e) => {
+  if (styling && !e.target.closest("#stylePanel, button[data-style]")) closeStylePanel();
+});
 
 $("trackView").onchange = () => {
   trackView = $("trackView").value;
@@ -537,10 +576,6 @@ $("trackView").onchange = () => {
 };
 
 $("catList").onchange = $("trackList").onchange = (e) => {
-  if (e.target.dataset.color) {
-    setDisplay({ colors: { ...display.colors, [e.target.dataset.color]: e.target.value } });
-    return;
-  }
   const c = e.target.dataset.cat;
   if (e.target.checked) hidden.delete(c); else hidden.add(c);
   writeJson(HIDDEN_KEY, [...hidden]);
@@ -651,7 +686,7 @@ $("importFile").onchange = async (e) => {
 
 $("heatStyle").value = display.heatStyle;
 $("heatWidth").value = display.heatWidth;
-$("resetColors").hidden = !Object.keys(display.colors).length;
+$("resetColors").hidden = !Object.keys(display.colors).length && !Object.keys(display.sizes).length;
 renderCategories();
 renderTrackKinds();
 renderList();
