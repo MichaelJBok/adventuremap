@@ -19,7 +19,7 @@ const HEAT_STYLES = {
   ink: { name: "Ink", line: "#212121", ramp: ["rgba(33,33,33,0.15)", "rgba(33,33,33,0.3)", "rgba(33,33,33,0.5)", "rgba(33,33,33,0.7)", "rgba(0,0,0,0.9)"] },
 };
 const HEAT_WIDTHS = { thin: 0.6, normal: 1, wide: 1.7 };
-const DEFAULT_DISPLAY = { colors: {}, sizes: {}, opacities: {}, solid: {}, heatStyle: "fire", heatWidth: "normal" };
+const DEFAULT_DISPLAY = { colors: {}, sizes: {}, opacities: {}, solid: {}, base: {}, heatStyle: "fire", heatWidth: "normal" };
 const HEAT_STEP_M = 50; // heatmap points are spaced evenly along each track, so time spent in one spot doesn't count extra
 const NEW_CATEGORY = "__new__";
 const TRACK_KINDS = [
@@ -205,6 +205,7 @@ function findSaved(name, lat, lon) {
 const view = readJson(VIEW_KEY, { center: [13, 45], zoom: 3 });
 const map = new maplibregl.Map({ container: "map", style: "https://tiles.openfreemap.org/styles/liberty", ...view });
 map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }));
+map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }));
 map.on("moveend", () => writeJson(VIEW_KEY, { center: map.getCenter().toArray(), zoom: map.getZoom() }));
 
@@ -260,13 +261,60 @@ const BASEMAPS = {
     maxzoom: 18, attribution: "&copy; Esri" },
 };
 
+// Things drawn over the base map, each with a switch in the side panel.
+const OVERLAYS = {
+  hillshade: { type: "raster-dem", encoding: "terrarium", tileSize: 256, maxzoom: 15,
+    tiles: ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"],
+    attribution: "Elevation &copy; Mapzen and others" },
+  hiking: { type: "raster", tileSize: 256, maxzoom: 18, tiles: ["https://tile.waymarkedtrails.org/hiking/{z}/{x}/{y}.png"],
+    attribution: "Trails &copy; <a href=\"https://hiking.waymarkedtrails.org\">Waymarked Trails</a>" },
+  cycling: { type: "raster", tileSize: 256, maxzoom: 18, tiles: ["https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png"],
+    attribution: "Routes &copy; <a href=\"https://cycling.waymarkedtrails.org\">Waymarked Trails</a>" },
+};
+const DEFAULT_BASE = { map: "", labels: true, hillshade: false, hiking: false, cycling: false, fade: 0 };
+const baseOptions = () => ({ ...DEFAULT_BASE, ...display.base });
+let baseLabels = []; // the base map's own label layers, found when it loads
+let currentBasemap = "";
+
 function setBasemap(name) {
+  currentBasemap = name;
   if (map.getLayer("basemap")) { map.removeLayer("basemap"); map.removeSource("basemap"); }
   if (!name) return;
   map.addSource("basemap", { type: "raster", tileSize: 256, ...BASEMAPS[name] });
-  // Below the labels, so they stay on top and stay clickable.
-  const firstLabel = map.getStyle().layers.find((l) => l.type === "symbol")?.id;
-  map.addLayer({ id: "basemap", type: "raster", source: "basemap" }, firstLabel);
+  // Beneath the fade and the labels, so labels stay on top and stay clickable.
+  map.addLayer({ id: "basemap", type: "raster", source: "basemap" }, map.getLayer("hillshade") ? "hillshade" : "fade");
+}
+
+function setOverlay(id, on) {
+  if (!on) {
+    if (map.getLayer(id)) { map.removeLayer(id); map.removeSource(id); }
+    return;
+  }
+  if (map.getLayer(id)) return;
+  map.addSource(id, OVERLAYS[id]);
+  if (id === "hillshade") {
+    map.addLayer({ id, type: "hillshade", source: id, paint: { "hillshade-exaggeration": 0.35, "hillshade-shadow-color": "#5a4a3a" } }, "fade");
+  } else {
+    // Above the base map's labels but beneath my own routes and tracks.
+    map.addLayer({ id, type: "raster", source: id, paint: { "raster-opacity": 0.8 } }, "plans");
+  }
+}
+
+function renderBaseControls() {
+  const b = baseOptions();
+  $("basemap").value = b.map;
+  for (const key of ["labels", "hillshade", "hiking", "cycling"]) $(`base-${key}`).checked = b[key];
+  $("baseFade").value = b.fade;
+}
+
+function applyBase() {
+  renderBaseControls();
+  if (!map.getLayer("fade")) return; // the map hasn't finished loading
+  const b = baseOptions();
+  if (currentBasemap !== b.map) setBasemap(b.map);
+  for (const id of Object.keys(OVERLAYS)) setOverlay(id, b[id]);
+  for (const id of baseLabels) map.setLayoutProperty(id, "visibility", b.labels ? "visible" : "none");
+  map.setPaintProperty("fade", "fill-opacity", b.fade);
 }
 
 function textOn(hex) {
@@ -365,6 +413,11 @@ function drawPlaces() {
 }
 
 map.on("load", () => {
+  baseLabels = map.getStyle().layers.filter((l) => l.type === "symbol").map((l) => l.id);
+  // A white wash between the base map and its labels, to make tracks and places stand out.
+  map.addSource("fade", { type: "geojson", data: { type: "Feature", properties: {},
+    geometry: { type: "Polygon", coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] } } });
+  map.addLayer({ id: "fade", type: "fill", source: "fade", paint: { "fill-color": "#fff", "fill-opacity": 0 } }, baseLabels[0]);
   map.addSource("plans", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   // Planning routes sit beneath my own tracks. Dashes can't vary by feature, so solid routes get a layer of their own.
   const routePaint = { "line-color": ["get", "color"], "line-opacity": ["get", "opacity"],
@@ -398,7 +451,9 @@ map.on("load", () => {
     filter: ["==", ["get", "class"], "peak"],
     layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 11, "text-offset": [0, 0.9], "text-anchor": "top" },
     paint: { "text-color": "#6d5a43", "text-halo-color": "#fff", "text-halo-width": 1.2 } });
+  baseLabels.push("peak-labels");
   drawPlaces();
+  applyBase();
 });
 
 // A small box rather than a point, so a fingertip can hit an icon.
@@ -666,6 +721,7 @@ function setDisplay(change, fromAccount = false) {
   renderAll();
   renderTrackKinds();
   drawTracks();
+  applyBase();
 }
 
 function renderCategories() {
@@ -743,7 +799,10 @@ $("search").oninput = renderList;
 
 function renderAll() { drawPlaces(); renderCategories(); renderList(); }
 
-$("basemap").onchange = () => setBasemap($("basemap").value);
+const setBase = (change) => setDisplay({ base: { ...baseOptions(), ...change } });
+$("basemap").onchange = () => setBase({ map: $("basemap").value });
+for (const key of ["labels", "hillshade", "hiking", "cycling"]) $(`base-${key}`).onchange = (e) => setBase({ [key]: e.target.checked });
+$("baseFade").oninput = () => setBase({ fade: Number($("baseFade").value) });
 
 // --- Backup ---
 $("exportBtn").onclick = () => {
@@ -824,6 +883,7 @@ $("importFile").onchange = async (e) => {
 $("heatStyle").value = display.heatStyle;
 $("heatWidth").value = display.heatWidth;
 $("resetColors").hidden = !customised();
+renderBaseControls();
 renderCategories();
 renderTrackKinds();
 renderList();

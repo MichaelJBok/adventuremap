@@ -37,6 +37,8 @@
   .cat-list { list-style:none; padding:0; margin:0; }
   .cat-list label { display:grid; grid-template-columns:auto auto 1fr auto; gap:8px; align-items:center; margin:0; padding:5px 0; font-weight:normal; font-size:14px; }
   .cat-list input { width:auto; margin:0; }
+  .base-list { margin-top:6px; }
+  .base-list label { grid-template-columns:auto 1fr; }
   .dot { width:12px; height:12px; border-radius:50%; background:var(--c); border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.25); }
   .cat-list button.dot { width:18px; height:18px; padding:0; cursor:pointer; }
   #stylePanel { position:fixed; z-index:10; width:220px; padding:12px; background:#fff; border:1px solid var(--border); border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,.15); }
@@ -122,6 +124,14 @@
       <option value="topo">Topo</option>
       <option value="satellite">Satellite</option>
     </select>
+    <ul class="cat-list base-list">
+      <li><label><input type="checkbox" id="base-labels"><span>Labels</span></label></li>
+      <li><label><input type="checkbox" id="base-hillshade"><span>Hillshade</span></label></li>
+      <li><label><input type="checkbox" id="base-hiking"><span>Hiking trails</span></label></li>
+      <li><label><input type="checkbox" id="base-cycling"><span>Cycling routes</span></label></li>
+    </ul>
+    <label for="baseFade">Fade the base map</label>
+    <input type="range" id="baseFade" min="0" max="0.8" step="0.05" style="padding:0;border:0">
 
     <h2>Categories</h2>
     <ul id="catList" class="cat-list"></ul>
@@ -184,11 +194,11 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <!-- Change ?v= on every release so browsers load the new scripts together with this page. -->
-<script src="app.js?v=20261105e"></script>
+<script src="app.js?v=20261105f"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="strava.js?v=20261105e"></script>
-<script src="sync.js?v=20261105e"></script>
+<script src="strava.js?v=20261105f"></script>
+<script src="sync.js?v=20261105f"></script>
 </body>
 </html>
