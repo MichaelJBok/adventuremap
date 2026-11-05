@@ -275,11 +275,28 @@ const OVERLAYS = {
   cycling: { type: "raster", tileSize: 256, maxzoom: 18, tiles: ["https://tile.waymarkedtrails.org/cycling/{z}/{x}/{y}.png"],
     attribution: "Routes &copy; <a href=\"https://cycling.waymarkedtrails.org\">Waymarked Trails</a>" },
 };
-const DEFAULT_BASE = { map: "", labels: true, hillshade: false, hiking: false, cycling: false, fade: 0 };
+const DEFAULT_BASE = { map: "", labels: true, roads: true, hillshade: false, hiking: false, cycling: false, fade: 0 };
 const baseOptions = () => ({ ...DEFAULT_BASE, ...display.base });
 let baseLabels = []; // the base map's own label layers, found when it loads
 let baseLayerIds = new Set(); // every layer of the base style, so a style swap knows which layers are mine
+let baseRoads = new Set(); // its roads and their names; paths and railways stay, being useful outdoors
+
+// Where the run of label layers at the top of a style begins. One-way arrows sit among the roads
+// lower down, so the first label layer isn't it.
+function labelsStart(layers) {
+  let i = layers.length;
+  while (i > 0 && layers[i - 1].type === "symbol") i--;
+  return i;
+}
+
+function findBaseLayers(ids) {
+  const layers = map.getStyle().layers.filter((l) => ids.has(l.id));
+  baseLabels = [...layers.filter((l) => l.type === "symbol").map((l) => l.id), "peak-labels"];
+  baseRoads = new Set(layers.filter((l) => ["transportation", "transportation_name"].includes(l["source-layer"])
+    && !/rail|path|pedestrian|pier/.test(l.id)).map((l) => l.id));
+}
 let currentBasemap = "";
+const BASE_SWITCHES = ["labels", "roads", "hillshade", "hiking", "cycling"];
 
 function setBasemap(name) {
   currentBasemap = name;
@@ -317,15 +334,14 @@ function setVectorStyle(url) {
       nextIds = new Set(next.layers.map((l) => l.id));
       const mine = previous.layers.filter((l) => !baseLayerIds.has(l.id));
       const layers = [...next.layers];
-      const firstLabel = layers.findIndex((l) => l.type === "symbol");
-      layers.splice(firstLabel < 0 ? layers.length : firstLabel, 0, ...mine.filter((l) => under.has(l.id)));
+      layers.splice(labelsStart(layers), 0, ...mine.filter((l) => under.has(l.id)));
       layers.push(...mine.filter((l) => !under.has(l.id)));
       return { ...next, sources: { ...previous.sources, ...next.sources }, layers };
     },
   });
   map.once("style.load", () => {
     baseLayerIds = nextIds;
-    baseLabels = [...map.getStyle().layers.filter((l) => l.type === "symbol" && nextIds.has(l.id)).map((l) => l.id), "peak-labels"];
+    findBaseLayers(nextIds);
     applyBase();
   });
 }
@@ -333,7 +349,7 @@ function setVectorStyle(url) {
 function renderBaseControls() {
   const b = baseOptions();
   $("basemap").value = b.map;
-  for (const key of ["labels", "hillshade", "hiking", "cycling"]) $(`base-${key}`).checked = b[key];
+  for (const key of BASE_SWITCHES) $(`base-${key}`).checked = b[key];
   $("baseFade").value = b.fade;
 }
 
@@ -345,7 +361,10 @@ function applyBase() {
   const raster = BASEMAPS[b.map] ? b.map : "";
   if (currentBasemap !== raster) setBasemap(raster);
   for (const id of Object.keys(OVERLAYS)) setOverlay(id, b[id]);
-  for (const id of baseLabels) map.setLayoutProperty(id, "visibility", b.labels ? "visible" : "none");
+  for (const id of new Set([...baseLabels, ...baseRoads])) {
+    const shown = (b.labels || !baseLabels.includes(id)) && (b.roads || !baseRoads.has(id));
+    map.setLayoutProperty(id, "visibility", shown ? "visible" : "none");
+  }
   map.setPaintProperty("fade", "fill-opacity", b.fade);
   map.setPaintProperty("fade", "fill-color", b.map === "dark" ? "#000" : "#fff"); // a dark map fades toward black
 }
@@ -447,11 +466,12 @@ function drawPlaces() {
 
 map.on("load", () => {
   baseLayerIds = new Set(map.getStyle().layers.map((l) => l.id));
-  baseLabels = map.getStyle().layers.filter((l) => l.type === "symbol").map((l) => l.id);
+  findBaseLayers(baseLayerIds);
   // A white wash between the base map and its labels, to make tracks and places stand out.
   map.addSource("fade", { type: "geojson", data: { type: "Feature", properties: {},
     geometry: { type: "Polygon", coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]]] } } });
-  map.addLayer({ id: "fade", type: "fill", source: "fade", paint: { "fill-color": "#fff", "fill-opacity": 0 } }, baseLabels[0]);
+  map.addLayer({ id: "fade", type: "fill", source: "fade", paint: { "fill-color": "#fff", "fill-opacity": 0 } },
+    map.getStyle().layers[labelsStart(map.getStyle().layers)]?.id);
   map.addSource("plans", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   // Planning routes sit beneath my own tracks. Dashes can't vary by feature, so solid routes get a layer of their own.
   const routePaint = { "line-color": ["get", "color"], "line-opacity": ["get", "opacity"],
@@ -485,7 +505,6 @@ map.on("load", () => {
     filter: ["==", ["get", "class"], "peak"],
     layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Regular"], "text-size": 11, "text-offset": [0, 0.9], "text-anchor": "top" },
     paint: { "text-color": "#6d5a43", "text-halo-color": "#fff", "text-halo-width": 1.2 } });
-  baseLabels.push("peak-labels");
   drawPlaces();
   applyBase();
 });
@@ -835,7 +854,7 @@ function renderAll() { drawPlaces(); renderCategories(); renderList(); }
 
 const setBase = (change) => setDisplay({ base: { ...baseOptions(), ...change } });
 $("basemap").onchange = () => setBase({ map: $("basemap").value });
-for (const key of ["labels", "hillshade", "hiking", "cycling"]) $(`base-${key}`).onchange = (e) => setBase({ [key]: e.target.checked });
+for (const key of BASE_SWITCHES) $(`base-${key}`).onchange = (e) => setBase({ [key]: e.target.checked });
 $("baseFade").oninput = () => setBase({ fade: Number($("baseFade").value) });
 
 // --- Backup ---
