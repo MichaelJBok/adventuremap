@@ -85,6 +85,9 @@ const UPLOADED_KEY = "adventuremap.uploadedTo"; // accounts this device has alre
       saveDisplay: (d) => {
         db.collection("users").doc(user.uid).collection("settings").doc("display").set(clean(d)).catch(showError);
       },
+      saveTrack: (doc) => {
+        db.collection("users").doc(user.uid).collection("tracks").doc(doc.id).set(clean(doc)).catch(showError);
+      },
       saveTracks: (list) => {
         writeAll(db.collection("users").doc(user.uid).collection("tracks"), list)
           .then(() => { $("importStatus").textContent = `Saved ${list.length.toLocaleString("en-US")} tracks to your account.`; })

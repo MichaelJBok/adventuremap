@@ -81,7 +81,8 @@ function startStrava(db, userDoc) {
     try {
       const startedAt = nowSeconds();
       const activities = await fetchActivities(await accessToken(), account.syncedUntil - OVERLAP_DAYS * DAY);
-      const rows = activities.filter((a) => a.map?.summary_polyline).map(toTrack);
+      // Activities already here keep my edits, and deleted ones stay deleted.
+      const rows = activities.filter((a) => a.map?.summary_polyline).map(toTrack).filter((t) => !knownTrackIds.has(t.id));
       for (let i = 0; i < rows.length; i += 400) {
         const batch = db.batch();
         rows.slice(i, i + 400).forEach((t) => batch.set(tracksCol.doc(t.id), t));

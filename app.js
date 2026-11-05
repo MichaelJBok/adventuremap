@@ -136,8 +136,12 @@ const trackKind = (t) => t.plan ? planKind(t.plan)
   : TRACK_KINDS.find((k) => k.sports?.includes(t.sportType)) ?? TRACK_KINDS.at(-1);
 
 // Live Strava syncs store one line; imported tracks can be several, split where the GPS lost signal.
+// Every id ever stored, deleted ones included, so imports and syncs only ever add what's new.
+let knownTrackIds = new Set();
+
 function setTracks(list) {
-  tracks = list.map((t) => ({ ...t, kind: trackKind(t), lines: (t.polylines ?? [t.polyline]).filter(Boolean).map(decodePolyline) }));
+  knownTrackIds = new Set(list.map((t) => t.id));
+  tracks = list.filter((t) => !t.deleted).map((t) => ({ ...t, kind: trackKind(t), lines: (t.polylines ?? [t.polyline]).filter(Boolean).map(decodePolyline) }));
   heatPoints = null;
   drawTracks();
   renderTrackKinds();
@@ -169,7 +173,7 @@ const opacityOf = (name) => display.opacities[name] ?? (TRACK_KINDS.some((k) => 
 const kindFeature = (t) => ({
   type: "Feature",
   geometry: { type: "MultiLineString", coordinates: t.lines },
-  properties: { color: kindColor(t.kind), width: sizeOf(t.kind.name), opacity: opacityOf(t.kind.name),
+  properties: { id: t.id, color: kindColor(t.kind), width: sizeOf(t.kind.name), opacity: opacityOf(t.kind.name),
     name: t.name ?? "", plan: t.plan ?? "", dashed: !display.solid[t.kind.name], km: Math.round((t.distance ?? 0) / 100) / 10 },
 });
 
@@ -374,6 +378,10 @@ map.on("load", () => {
   map.addLayer({ id: "tracks", type: "line", source: "tracks", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": ["get", "color"], "line-opacity": 0.45,
       "line-width": ["interpolate", ["linear"], ["zoom"], 5, ["*", 1, ["get", "width"]], 14, ["*", 2.5, ["get", "width"]]] } });
+  // The track picked on the map, drawn over the rest.
+  map.addSource("picked", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({ id: "picked", type: "line", source: "picked", layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#00B8D4", "line-width": 6, "line-opacity": 0.9 } }); // cyan, unlike any road on the map
   // Heat builds where tracks overlap, from one pass through to the most worn paths. drawTracks sets its colours.
   map.addSource("heat", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "heat", type: "heatmap", source: "heat", maxzoom: 13, layout: { visibility: "none" },
@@ -404,8 +412,8 @@ const mineAt = (p) => map.queryRenderedFeatures(p, { layers: mineLayers() })[0]
 
 map.on("mousemove", (e) => {
   if (placing || draft) return;
-  const route = map.getLayer("plans") && map.queryRenderedFeatures(near(e.point), { layers: ROUTE_LAYERS }).length;
-  map.getCanvas().style.cursor = mineAt(e.point) || route || labelAt(e.point) ? "pointer" : "";
+  const line = map.getLayer("plans") && map.queryRenderedFeatures(near(e.point), { layers: trackLayers() }).length;
+  map.getCanvas().style.cursor = mineAt(e.point) || line || labelAt(e.point) ? "pointer" : "";
 });
 
 map.on("click", async (e) => {
@@ -417,23 +425,90 @@ map.on("click", async (e) => {
     map.easeTo({ center: mine.geometry.coordinates, zoom: zoom + 0.5 });
   } else if (mine) {
     showPlace(mine.properties.id);
-  } else if (!showRoute(e)) {
+  } else {
     const label = labelAt(e.point);
     if (label) showLabel(label, e.lngLat);
-    else popup?.remove();
+    else if (!showTracks(e)) popup?.remove();
   }
 });
 
 // --- Popups ---
 const ROUTE_LAYERS = ["plans", "plans-solid"];
 
-// A planning route: which stage it is and how long.
-function showRoute(e) {
-  const route = map.getLayer("plans") && map.queryRenderedFeatures(near(e.point), { layers: ROUTE_LAYERS })[0];
-  if (!route) return false;
-  const { name, plan, km } = route.properties;
-  openPopup(e.lngLat, `<div class="pop-title">${esc(name)}</div><div class="pop-meta">${esc(plan)} · ${km} km</div>`);
+// Lines only count where they can be seen: in heatmap view my own tracks appear only up close.
+function trackLayers() {
+  const mine = trackView === "lines" || map.getZoom() >= 12 ? ["tracks"] : [];
+  return [...mine, ...ROUTE_LAYERS].filter((l) => map.getLayer(l));
+}
+
+function tracksAt(point) {
+  const ids = new Set(map.queryRenderedFeatures(near(point), { layers: trackLayers() }).map((f) => f.properties.id));
+  return tracks.filter((t) => ids.has(t.id)).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
+}
+
+const TRACK_TYPES = { Run: "Run", Hike: "Hike", Walk: "Walk", Ride: "Ride", Sail: "Sail", Other: "Other" };
+const trackDate = (t) => (t.date ?? "").slice(0, 10);
+const trackMeta = (t) => [t.plan || t.kind.name, trackDate(t), t.distance ? `${(t.distance / 1000).toFixed(1)} km` : ""]
+  .filter(Boolean).join(" · ");
+
+function showTracks(e) {
+  const hits = tracksAt(e.point);
+  if (!hits.length) return false;
+  if (hits.length === 1) { showTrack(hits[0], e.lngLat); return true; }
+  // Paths walked many times have many tracks; list them to pick from.
+  const el = openPopup(e.lngLat, `<div class="pop-title">${hits.length} tracks here</div>
+    <ul class="pop-list">${hits.slice(0, 30).map((t, i) => `<li><button type="button" class="link" data-i="${i}">${esc(t.name || "Untitled")}</button>
+    <span class="pop-meta">${esc(trackMeta(t))}</span></li>`).join("")}</ul>
+    ${hits.length > 30 ? `<div class="pop-meta">Showing the 30 most recent. Zoom in to narrow it down.</div>` : ""}`);
+  el.querySelectorAll("button[data-i]").forEach((b) => { b.onclick = () => showTrack(hits[b.dataset.i], e.lngLat); });
   return true;
+}
+
+function highlightTrack(t) {
+  map.getSource("picked")?.setData({ type: "FeatureCollection", features: t ? [kindFeature(t)] : [] });
+}
+
+function showTrack(t, at) {
+  const el = openPopup(at, `<div class="pop-title">${esc(t.name || "Untitled")}</div>
+    <div class="pop-meta">${esc(trackMeta(t))}</div>
+    <div class="row"><button type="button" id="trackEdit">Edit</button>
+    <button type="button" id="trackDelete">Delete</button></div>`);
+  highlightTrack(t); // after openPopup, whose closing of the previous popup clears the highlight
+  popup.once("close", () => highlightTrack(null));
+  el.querySelector("#trackEdit").onclick = () => editTrack(t, at);
+  el.querySelector("#trackDelete").onclick = () => {
+    if (!confirm(`Delete “${t.name || "this track"}”? It won't come back with a later import.`)) return;
+    popup.remove();
+    // A small marker stays behind with the id, so importing the same export later doesn't restore it.
+    saveTrack({ id: t.id, deleted: true });
+  };
+}
+
+function editTrack(t, at) {
+  const el = openPopup(at, `<form id="trackForm">
+    <label for="tName">Name</label><input id="tName" value="${esc(t.name ?? "")}">
+    <label for="tDate">Date</label><input id="tDate" type="date" value="${esc(trackDate(t))}">
+    ${t.plan ? "" : `<label for="tType">Type</label><select id="tType">${Object.entries(TRACK_TYPES).map(([v, label]) =>
+      `<option value="${v}"${(TRACK_TYPES[t.sportType] ? t.sportType : "Other") === v ? " selected" : ""}>${label}</option>`).join("")}</select>`}
+    <div class="row"><button type="submit" class="primary">Save</button><button type="button" id="tCancel">Cancel</button></div></form>`);
+  highlightTrack(t);
+  popup.once("close", () => highlightTrack(null));
+  el.querySelector("#tCancel").onclick = () => showTrack(t, at);
+  el.querySelector("#trackForm").onsubmit = (e) => {
+    e.preventDefault();
+    const { kind, lines, ...stored } = t;
+    const updated = { ...stored, name: el.querySelector("#tName").value.trim(), date: el.querySelector("#tDate").value };
+    if (!t.plan) updated.sportType = el.querySelector("#tType").value;
+    saveTrack(updated);
+    showTrack({ ...updated, kind: trackKind(updated), lines }, at);
+  };
+}
+
+// Signed in, the account's copy updates and the map follows; signed out, only this page changes.
+function saveTrack(doc) {
+  if (cloud) { cloud.saveTrack(doc); return; }
+  const rest = tracks.filter((t) => t.id !== doc.id).map(({ kind, lines, ...t }) => t);
+  setTracks([...rest, doc]);
 }
 
 function openPopup(lngLat, html) {
@@ -709,8 +784,11 @@ function importFinds(finds) {
 
 // Tracks made from a Strava export by scripts/strava_tracks_for_app.py. They're only kept while signed in.
 function importTracks(list) {
-  const valid = list.filter((t) => t.id && t.polylines?.length);
-  if (!valid.length) throw new Error("no tracks in this file");
+  const all = list.filter((t) => t.id && t.polylines?.length);
+  if (!all.length) throw new Error("no tracks in this file");
+  // Tracks already here keep any edits, and deleted ones stay deleted.
+  const valid = all.filter((t) => !knownTrackIds.has(t.id));
+  if (!valid.length) return `All ${all.length.toLocaleString("en-US")} tracks in this file are already here.`;
   if (!cloud) {
     setTracks([...tracks, ...valid]);
     return `Showing ${valid.length.toLocaleString("en-US")} tracks until you reload. Sign in first to keep them.`;
