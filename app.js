@@ -8,10 +8,13 @@ const PLACES_KEY = "adventuremap.places";
 const HIDDEN_KEY = "adventuremap.hiddenCategories";
 const VIEW_KEY = "adventuremap.view";
 const MENU_KEY = "adventuremap.menuHidden";
+const TRACK_VIEW_KEY = "adventuremap.trackView";
+const HEAT_STEP_M = 50; // heatmap points are spaced evenly along each track, so time spent in one spot doesn't count extra
 const NEW_CATEGORY = "__new__";
 const TRACK_KINDS = [
   { name: "Runs", color: "#D81B60", sports: ["Run", "TrailRun"] },
   { name: "Hikes and walks", color: "#00897B", sports: ["Hike", "Walk"] },
+  { name: "Rides", color: "#3949AB", sports: ["Ride", "GravelRide", "MountainBikeRide", "EBikeRide"] },
   { name: "Other tracks", color: "#546E7A" },
 ];
 const LIST_LIMIT = 100;
@@ -30,6 +33,8 @@ const ADDABLE = { poi: "Points of Interest", mountain_peak: "Points of Interest"
 let places = readJson(PLACES_KEY, []);
 let mushrooms = readJson(SVAMPKARTAN_KEY, []).map(toMushroom);
 let tracks = [];
+let heatPoints = null; // built the first time the heatmap is shown
+let trackView = readJson(TRACK_VIEW_KEY, "lines");
 let hidden = new Set(readJson(HIDDEN_KEY, []));
 let cloud = null; // set by sync.js while signed in
 let placing = false;
@@ -98,10 +103,29 @@ function decodePolyline(text) {
 
 const trackKind = (t) => TRACK_KINDS.find((k) => k.sports?.includes(t.sportType)) ?? TRACK_KINDS.at(-1);
 
+// Live Strava syncs store one line; imported tracks can be several, split where the GPS lost signal.
 function setTracks(list) {
-  tracks = list.map((t) => ({ ...t, kind: trackKind(t), coords: decodePolyline(t.polyline) }));
+  tracks = list.map((t) => ({ ...t, kind: trackKind(t), lines: (t.polylines ?? [t.polyline]).filter(Boolean).map(decodePolyline) }));
+  heatPoints = null;
   drawTracks();
   renderTrackKinds();
+}
+
+// Points every HEAT_STEP_M metres along a line, as [lon, lat].
+function alongLine(coords) {
+  const out = [];
+  let carry = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const [a, b] = [coords[i - 1], coords[i]];
+    const length = metres({ lat: a[1], lon: a[0] }, { lat: b[1], lon: b[0] });
+    for (let d = carry; d < length; d += HEAT_STEP_M) {
+      const f = d / length;
+      out.push([a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f]);
+    }
+    carry = (carry - length) % HEAT_STEP_M;
+    if (carry < 0) carry += HEAT_STEP_M;
+  }
+  return out;
 }
 
 const addableCategories = () => categories().filter((c) => c !== MUSHROOMS);
@@ -240,14 +264,31 @@ function sourceFor(category) {
 }
 
 function drawTracks() {
-  map.getSource("tracks")?.setData({
+  if (!map.getSource("tracks")) return;
+  const shown = tracks.filter((t) => !hidden.has(t.kind.name));
+  const heat = trackView === "heat";
+  map.getSource("tracks").setData({
     type: "FeatureCollection",
-    features: tracks.filter((t) => !hidden.has(t.kind.name)).map((t) => ({
+    features: shown.map((t) => ({
       type: "Feature",
-      geometry: { type: "LineString", coordinates: t.coords },
+      geometry: { type: "MultiLineString", coordinates: t.lines },
       properties: { color: t.kind.color },
     })),
   });
+  if (heat && !heatPoints) {
+    heatPoints = tracks.map((t) => ({ kind: t.kind.name, points: t.lines.flatMap(alongLine) }));
+  }
+  map.getSource("heat").setData({
+    type: "FeatureCollection",
+    features: heat ? heatPoints.filter((h) => !hidden.has(h.kind)).map((h) => ({
+      type: "Feature", geometry: { type: "MultiPoint", coordinates: h.points }, properties: {},
+    })) : [],
+  });
+  // Up close the heatmap gives way to the lines themselves, drawn in its hottest colour.
+  map.setLayoutProperty("heat", "visibility", heat ? "visible" : "none");
+  map.setPaintProperty("tracks", "line-color", heat ? "#E65100" : ["get", "color"]);
+  map.setPaintProperty("tracks", "line-opacity", heat
+    ? ["interpolate", ["linear"], ["zoom"], 11.5, 0, 13, 0.3] : 0.45);
 }
 
 function drawPlaces() {
@@ -267,6 +308,16 @@ map.on("load", () => {
   map.addLayer({ id: "tracks", type: "line", source: "tracks", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": ["get", "color"], "line-opacity": 0.45,
       "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 14, 2.5] } });
+  // Heat builds where tracks overlap: cool blue for one pass, through to white on the most worn paths.
+  map.addSource("heat", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({ id: "heat", type: "heatmap", source: "heat", maxzoom: 13, layout: { visibility: "none" },
+    paint: {
+      "heatmap-radius": ["interpolate", ["exponential", 2], ["zoom"], 3, 2, 9, 3, 12, 6],
+      "heatmap-intensity": ["interpolate", ["exponential", 2], ["zoom"], 3, 0.01, 9, 0.06, 12, 0.2],
+      "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"],
+        0, "rgba(0,0,0,0)", 0.05, "rgba(33,102,172,0.55)", 0.3, "#7B1FA2", 0.6, "#E65100", 0.85, "#FFC107", 1, "#FFFDE7"],
+      "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 11.5, 0.9, 13, 0],
+    } });
   drawTracks();
   // Summits are in the tiles, but this style doesn't draw them.
   map.addLayer({ id: "peak-dots", type: "circle", source: "openmaptiles", "source-layer": "mountain_peak", minzoom: 10,
@@ -439,6 +490,13 @@ function renderTrackKinds() {
     <span class="count">${tracks.filter((t) => t.kind === k).length.toLocaleString("en-US")}</span></label></li>`).join("");
 }
 
+$("trackView").value = trackView;
+$("trackView").onchange = () => {
+  trackView = $("trackView").value;
+  writeJson(TRACK_VIEW_KEY, trackView);
+  drawTracks();
+};
+
 $("catList").onchange = $("trackList").onchange = (e) => {
   const c = e.target.dataset.cat;
   if (e.target.checked) hidden.delete(c); else hidden.add(c);
@@ -512,6 +570,18 @@ function importFinds(finds) {
   return `${finds.length.toLocaleString("en-US")} finds in the file: ${added.length.toLocaleString("en-US")} new, ${dated.length.toLocaleString("en-US")} dates filled in.`;
 }
 
+// Tracks made from a Strava export by scripts/strava_tracks_for_app.py. They're only kept while signed in.
+function importTracks(list) {
+  const valid = list.filter((t) => t.id && t.polylines?.length);
+  if (!valid.length) throw new Error("no tracks in this file");
+  if (!cloud) {
+    setTracks([...tracks, ...valid]);
+    return `Showing ${valid.length.toLocaleString("en-US")} tracks until you reload. Sign in first to keep them.`;
+  }
+  cloud.saveTracks(valid);
+  return `Saving ${valid.length.toLocaleString("en-US")} tracks to your account…`;
+}
+
 $("importBtn").onclick = () => $("importFile").click();
 $("importFile").onchange = async (e) => {
   const file = e.target.files[0];
@@ -523,6 +593,10 @@ $("importFile").onchange = async (e) => {
       return;
     }
     const data = JSON.parse(await file.text());
+    if (data.tracks) {
+      $("importStatus").textContent = importTracks(data.tracks);
+      return;
+    }
     const list = (data.places ?? []).filter((p) => p.id && p.name && p.category && Number.isFinite(p.lat) && Number.isFinite(p.lon));
     if (!list.length) throw new Error("no places in this file");
     addPlaces(list);

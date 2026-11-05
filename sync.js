@@ -82,6 +82,11 @@ const UPLOADED_KEY = "adventuremap.uploadedTo"; // accounts this device has alre
     cloud = {
       save: (list) => { writeAll(col, list).catch(showError); },
       remove: (id) => { col.doc(id).delete().catch(showError); },
+      saveTracks: (list) => {
+        writeAll(db.collection("users").doc(user.uid).collection("tracks"), list)
+          .then(() => { $("importStatus").textContent = `Saved ${list.length.toLocaleString("en-US")} tracks to your account.`; })
+          .catch(showError);
+      },
     };
 
     // First sign-in on this device: send up the places saved here before sync.
