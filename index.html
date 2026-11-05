@@ -43,6 +43,8 @@
   #stylePanel h3 { margin:0 0 6px; font-size:14px; }
   #stylePanel input[type=color] { height:34px; padding:2px; }
   #stylePanel input[type=range] { padding:0; border:0; }
+  #stylePanel label.check { display:flex; gap:8px; align-items:center; margin-top:10px; font-weight:normal; font-size:14px; }
+  #stylePanel label.check input { width:auto; margin:0; }
   #heatOptions select { flex:1; width:auto; }
   button.link { border:0; background:none; padding:2px 0; color:var(--accent); font-size:12px; }
   .count { color:var(--muted); font-variant-numeric:tabular-nums; }
@@ -171,17 +173,18 @@
     <input type="range" id="styleSize" min="0.5" max="2.5" step="0.1">
     <label for="styleOpacity">Opacity</label>
     <input type="range" id="styleOpacity" min="0.1" max="1" step="0.05">
+    <label id="styleDashedRow" class="check" hidden><input type="checkbox" id="styleDashed"> Dashed line</label>
     <div class="row"><button type="button" id="styleDone">Done</button></div>
   </div>
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <!-- Change ?v= on every release so browsers load the new scripts together with this page. -->
-<script src="app.js?v=20261105c"></script>
+<script src="app.js?v=20261105d"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="strava.js?v=20261105c"></script>
-<script src="sync.js?v=20261105c"></script>
+<script src="strava.js?v=20261105d"></script>
+<script src="sync.js?v=20261105d"></script>
 </body>
 </html>

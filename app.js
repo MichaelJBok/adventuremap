@@ -19,7 +19,7 @@ const HEAT_STYLES = {
   ink: { name: "Ink", line: "#212121", ramp: ["rgba(33,33,33,0.15)", "rgba(33,33,33,0.3)", "rgba(33,33,33,0.5)", "rgba(33,33,33,0.7)", "rgba(0,0,0,0.9)"] },
 };
 const HEAT_WIDTHS = { thin: 0.6, normal: 1, wide: 1.7 };
-const DEFAULT_DISPLAY = { colors: {}, sizes: {}, opacities: {}, heatStyle: "fire", heatWidth: "normal" };
+const DEFAULT_DISPLAY = { colors: {}, sizes: {}, opacities: {}, solid: {}, heatStyle: "fire", heatWidth: "normal" };
 const HEAT_STEP_M = 50; // heatmap points are spaced evenly along each track, so time spent in one spot doesn't count extra
 const NEW_CATEGORY = "__new__";
 const TRACK_KINDS = [
@@ -170,7 +170,7 @@ const kindFeature = (t) => ({
   type: "Feature",
   geometry: { type: "MultiLineString", coordinates: t.lines },
   properties: { color: kindColor(t.kind), width: sizeOf(t.kind.name), opacity: opacityOf(t.kind.name),
-    name: t.name ?? "", plan: t.plan ?? "", km: Math.round((t.distance ?? 0) / 100) / 10 },
+    name: t.name ?? "", plan: t.plan ?? "", dashed: !display.solid[t.kind.name], km: Math.round((t.distance ?? 0) / 100) / 10 },
 });
 
 function colorOf(category) {
@@ -361,15 +361,19 @@ function drawPlaces() {
 }
 
 map.on("load", () => {
+  map.addSource("plans", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  // Planning routes sit beneath my own tracks. Dashes can't vary by feature, so solid routes get a layer of their own.
+  const routePaint = { "line-color": ["get", "color"], "line-opacity": ["get", "opacity"],
+    "line-width": ["interpolate", ["linear"], ["zoom"], 5, ["*", 1.5, ["get", "width"]], 14, ["*", 3.5, ["get", "width"]]] };
+  map.addLayer({ id: "plans", type: "line", source: "plans", filter: ["get", "dashed"],
+    layout: { "line-cap": "butt", "line-join": "round" }, paint: { ...routePaint, "line-dasharray": [2, 1.5] } });
+  map.addLayer({ id: "plans-solid", type: "line", source: "plans", filter: ["!", ["get", "dashed"]],
+    layout: { "line-cap": "round", "line-join": "round" }, paint: routePaint });
   // Thin and see-through, so paths travelled many times build up and stand out.
   map.addSource("tracks", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "tracks", type: "line", source: "tracks", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": ["get", "color"], "line-opacity": 0.45,
       "line-width": ["interpolate", ["linear"], ["zoom"], 5, ["*", 1, ["get", "width"]], 14, ["*", 2.5, ["get", "width"]]] } });
-  map.addSource("plans", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
-  map.addLayer({ id: "plans", type: "line", source: "plans", layout: { "line-cap": "butt", "line-join": "round" },
-    paint: { "line-color": ["get", "color"], "line-opacity": ["get", "opacity"], "line-dasharray": [2, 1.5],
-      "line-width": ["interpolate", ["linear"], ["zoom"], 5, ["*", 1.5, ["get", "width"]], 14, ["*", 3.5, ["get", "width"]]] } });
   // Heat builds where tracks overlap, from one pass through to the most worn paths. drawTracks sets its colours.
   map.addSource("heat", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "heat", type: "heatmap", source: "heat", maxzoom: 13, layout: { visibility: "none" },
@@ -400,7 +404,7 @@ const mineAt = (p) => map.queryRenderedFeatures(p, { layers: mineLayers() })[0]
 
 map.on("mousemove", (e) => {
   if (placing || draft) return;
-  const route = map.getLayer("plans") && map.queryRenderedFeatures(near(e.point), { layers: ["plans"] }).length;
+  const route = map.getLayer("plans") && map.queryRenderedFeatures(near(e.point), { layers: ROUTE_LAYERS }).length;
   map.getCanvas().style.cursor = mineAt(e.point) || route || labelAt(e.point) ? "pointer" : "";
 });
 
@@ -421,9 +425,11 @@ map.on("click", async (e) => {
 });
 
 // --- Popups ---
+const ROUTE_LAYERS = ["plans", "plans-solid"];
+
 // A planning route: which stage it is and how long.
 function showRoute(e) {
-  const route = map.getLayer("plans") && map.queryRenderedFeatures(near(e.point), { layers: ["plans"] })[0];
+  const route = map.getLayer("plans") && map.queryRenderedFeatures(near(e.point), { layers: ROUTE_LAYERS })[0];
   if (!route) return false;
   const { name, plan, km } = route.properties;
   openPopup(e.lngLat, `<div class="pop-title">${esc(name)}</div><div class="pop-meta">${esc(plan)} · ${km} km</div>`);
@@ -558,6 +564,8 @@ function openStylePanel(button) {
   $("styleColor").value = isTrack ? kindColor(kind) : colorOf(styling);
   $("styleSize").value = sizeOf(styling);
   $("styleOpacity").value = opacityOf(styling);
+  $("styleDashedRow").hidden = !kind?.plan;
+  $("styleDashed").checked = !display.solid[styling];
   const panel = $("stylePanel");
   panel.hidden = false;
   const at = button.getBoundingClientRect();
@@ -571,7 +579,7 @@ function closeStylePanel() {
   styling = null;
 }
 
-const customised = () => ["colors", "sizes", "opacities"].some((k) => Object.keys(display[k]).length);
+const customised = () => ["colors", "sizes", "opacities", "solid"].some((k) => Object.keys(display[k]).length);
 
 function setDisplay(change, fromAccount = false) {
   display = { ...DEFAULT_DISPLAY, ...display, ...change };
@@ -605,7 +613,8 @@ $("trackView").value = trackView;
 $("heatStyle").append(...Object.entries(HEAT_STYLES).map(([id, s]) => new Option(s.name, id)));
 $("heatStyle").onchange = () => setDisplay({ heatStyle: $("heatStyle").value });
 $("heatWidth").onchange = () => setDisplay({ heatWidth: $("heatWidth").value });
-$("resetColors").onclick = () => setDisplay({ colors: {}, sizes: {}, opacities: {} });
+$("resetColors").onclick = () => setDisplay({ colors: {}, sizes: {}, opacities: {}, solid: {} });
+$("styleDashed").onchange = () => setDisplay({ solid: { ...display.solid, [styling]: !$("styleDashed").checked } });
 $("styleOpacity").oninput = () => setDisplay({ opacities: { ...display.opacities, [styling]: Number($("styleOpacity").value) } });
 $("styleColor").oninput = () => setDisplay({ colors: { ...display.colors, [styling]: $("styleColor").value } });
 $("styleSize").oninput = () => setDisplay({ sizes: { ...display.sizes, [styling]: Number($("styleSize").value) } });
