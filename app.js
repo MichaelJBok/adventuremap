@@ -9,6 +9,17 @@ const HIDDEN_KEY = "adventuremap.hiddenCategories";
 const VIEW_KEY = "adventuremap.view";
 const MENU_KEY = "adventuremap.menuHidden";
 const TRACK_VIEW_KEY = "adventuremap.trackView";
+const DISPLAY_KEY = "adventuremap.display"; // chosen colours and heatmap style; synced to the account when signed in
+// Each heatmap style runs from one pass to the most worn paths; `line` draws the tracks up close.
+const HEAT_STYLES = {
+  fire: { name: "Fire", line: "#E65100", ramp: ["rgba(33,102,172,0.55)", "#7B1FA2", "#E65100", "#FFC107", "#FFFDE7"] },
+  ocean: { name: "Ocean", line: "#0277BD", ramp: ["rgba(0,77,64,0.5)", "#00838F", "#0288D1", "#4FC3F7", "#E1F5FE"] },
+  viridis: { name: "Viridis", line: "#21918C", ramp: ["rgba(68,1,84,0.5)", "#3B528B", "#21918C", "#5EC962", "#FDE725"] },
+  magenta: { name: "Magenta", line: "#C2185B", ramp: ["rgba(74,20,140,0.5)", "#7B1FA2", "#C2185B", "#F06292", "#FCE4EC"] },
+  ink: { name: "Ink", line: "#212121", ramp: ["rgba(33,33,33,0.15)", "rgba(33,33,33,0.3)", "rgba(33,33,33,0.5)", "rgba(33,33,33,0.7)", "rgba(0,0,0,0.9)"] },
+};
+const HEAT_WIDTHS = { thin: 0.6, normal: 1, wide: 1.7 };
+const DEFAULT_DISPLAY = { colors: {}, heatStyle: "fire", heatWidth: "normal" };
 const HEAT_STEP_M = 50; // heatmap points are spaced evenly along each track, so time spent in one spot doesn't count extra
 const NEW_CATEGORY = "__new__";
 const TRACK_KINDS = [
@@ -35,6 +46,7 @@ let mushrooms = readJson(SVAMPKARTAN_KEY, []).map(toMushroom);
 let tracks = [];
 let heatPoints = null; // built the first time the heatmap is shown
 let trackView = readJson(TRACK_VIEW_KEY, "lines");
+let display = { ...DEFAULT_DISPLAY, ...readJson(DISPLAY_KEY, {}) };
 let hidden = new Set(readJson(HIDDEN_KEY, []));
 let cloud = null; // set by sync.js while signed in
 let placing = false;
@@ -130,7 +142,10 @@ function alongLine(coords) {
 
 const addableCategories = () => categories().filter((c) => c !== MUSHROOMS);
 
+const kindColor = (k) => display.colors[k.name] ?? k.color;
+
 function colorOf(category) {
+  if (display.colors[category]) return display.colors[category];
   if (BASE_COLORS[category]) return BASE_COLORS[category];
   const extras = categories().filter((c) => !BASE_COLORS[c]);
   return EXTRA_COLORS[extras.indexOf(category) % EXTRA_COLORS.length] ?? "#616161";
@@ -272,7 +287,7 @@ function drawTracks() {
     features: shown.map((t) => ({
       type: "Feature",
       geometry: { type: "MultiLineString", coordinates: t.lines },
-      properties: { color: t.kind.color },
+      properties: { color: kindColor(t.kind) },
     })),
   });
   if (heat && !heatPoints) {
@@ -286,9 +301,15 @@ function drawTracks() {
   });
   // Up close the heatmap gives way to the lines themselves, drawn in its hottest colour.
   map.setLayoutProperty("heat", "visibility", heat ? "visible" : "none");
-  map.setPaintProperty("tracks", "line-color", heat ? "#E65100" : ["get", "color"]);
+  map.setPaintProperty("tracks", "line-color", heat ? HEAT_STYLES[display.heatStyle].line : ["get", "color"]);
   map.setPaintProperty("tracks", "line-opacity", heat
     ? ["interpolate", ["linear"], ["zoom"], 11.5, 0, 13, 0.3] : 0.45);
+  const style = HEAT_STYLES[display.heatStyle];
+  const width = HEAT_WIDTHS[display.heatWidth];
+  map.setPaintProperty("heat", "heatmap-color", ["interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)",
+    ...style.ramp.flatMap((color, i) => [[0.05, 0.3, 0.6, 0.85, 1][i], color])]);
+  map.setPaintProperty("heat", "heatmap-radius", ["interpolate", ["exponential", 2], ["zoom"], 3, 2 * width, 9, 3 * width, 12, 6 * width]);
+  $("heatOptions").hidden = !heat;
 }
 
 function drawPlaces() {
@@ -308,14 +329,11 @@ map.on("load", () => {
   map.addLayer({ id: "tracks", type: "line", source: "tracks", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": ["get", "color"], "line-opacity": 0.45,
       "line-width": ["interpolate", ["linear"], ["zoom"], 5, 1, 14, 2.5] } });
-  // Heat builds where tracks overlap: cool blue for one pass, through to white on the most worn paths.
+  // Heat builds where tracks overlap, from one pass through to the most worn paths. drawTracks sets its colours.
   map.addSource("heat", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "heat", type: "heatmap", source: "heat", maxzoom: 13, layout: { visibility: "none" },
     paint: {
-      "heatmap-radius": ["interpolate", ["exponential", 2], ["zoom"], 3, 2, 9, 3, 12, 6],
       "heatmap-intensity": ["interpolate", ["exponential", 2], ["zoom"], 3, 0.01, 9, 0.06, 12, 0.2],
-      "heatmap-color": ["interpolate", ["linear"], ["heatmap-density"],
-        0, "rgba(0,0,0,0)", 0.05, "rgba(33,102,172,0.55)", 0.3, "#7B1FA2", 0.6, "#E65100", 0.85, "#FFC107", 1, "#FFFDE7"],
       "heatmap-opacity": ["interpolate", ["linear"], ["zoom"], 11.5, 0.9, 13, 0],
     } });
   drawTracks();
@@ -474,23 +492,44 @@ $("form").onsubmit = (e) => {
 };
 
 // --- Side panel ---
+// The coloured dot is a colour input, so clicking it picks a new colour instead of ticking the box.
+const colorPicker = (name, color) =>
+  `<input type="color" class="dot" value="${color}" data-color="${esc(name)}" aria-label="Colour for ${esc(name)}" title="Change colour">`;
+
+function setDisplay(change, fromAccount = false) {
+  display = { ...DEFAULT_DISPLAY, ...display, ...change };
+  writeJson(DISPLAY_KEY, display);
+  if (!fromAccount) cloud?.saveDisplay(display);
+  $("heatStyle").value = display.heatStyle;
+  $("heatWidth").value = display.heatWidth;
+  $("resetColors").hidden = !Object.keys(display.colors).length;
+  renderAll();
+  renderTrackKinds();
+  drawTracks();
+}
+
 function renderCategories() {
   const counts = {};
   allPlaces().forEach((p) => { counts[p.category] = (counts[p.category] ?? 0) + 1; });
   $("catList").innerHTML = categories().map((c) => `<li><label>
     <input type="checkbox" data-cat="${esc(c)}"${hidden.has(c) ? "" : " checked"}>
-    <span class="dot" style="--c:${colorOf(c)}"></span><span>${esc(c)}</span>
+    ${colorPicker(c, colorOf(c))}<span>${esc(c)}</span>
     <span class="count">${(counts[c] ?? 0).toLocaleString("en-US")}</span></label></li>`).join("");
 }
 
 function renderTrackKinds() {
   $("trackList").innerHTML = TRACK_KINDS.map((k) => `<li><label>
     <input type="checkbox" data-cat="${esc(k.name)}"${hidden.has(k.name) ? "" : " checked"}>
-    <span class="dot" style="--c:${k.color}"></span><span>${esc(k.name)}</span>
+    ${colorPicker(k.name, kindColor(k))}<span>${esc(k.name)}</span>
     <span class="count">${tracks.filter((t) => t.kind === k).length.toLocaleString("en-US")}</span></label></li>`).join("");
 }
 
 $("trackView").value = trackView;
+$("heatStyle").append(...Object.entries(HEAT_STYLES).map(([id, s]) => new Option(s.name, id)));
+$("heatStyle").onchange = () => setDisplay({ heatStyle: $("heatStyle").value });
+$("heatWidth").onchange = () => setDisplay({ heatWidth: $("heatWidth").value });
+$("resetColors").onclick = () => setDisplay({ colors: {} });
+
 $("trackView").onchange = () => {
   trackView = $("trackView").value;
   writeJson(TRACK_VIEW_KEY, trackView);
@@ -498,6 +537,10 @@ $("trackView").onchange = () => {
 };
 
 $("catList").onchange = $("trackList").onchange = (e) => {
+  if (e.target.dataset.color) {
+    setDisplay({ colors: { ...display.colors, [e.target.dataset.color]: e.target.value } });
+    return;
+  }
   const c = e.target.dataset.cat;
   if (e.target.checked) hidden.delete(c); else hidden.add(c);
   writeJson(HIDDEN_KEY, [...hidden]);
@@ -606,6 +649,9 @@ $("importFile").onchange = async (e) => {
   }
 };
 
+$("heatStyle").value = display.heatStyle;
+$("heatWidth").value = display.heatWidth;
+$("resetColors").hidden = !Object.keys(display.colors).length;
 renderCategories();
 renderTrackKinds();
 renderList();

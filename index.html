@@ -38,6 +38,12 @@
   .cat-list label { display:grid; grid-template-columns:auto auto 1fr auto; gap:8px; align-items:center; margin:0; padding:5px 0; font-weight:normal; font-size:14px; }
   .cat-list input { width:auto; margin:0; }
   .dot { width:12px; height:12px; border-radius:50%; background:var(--c); border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.25); }
+  .cat-list input.dot { appearance:none; -webkit-appearance:none; width:18px; height:18px; padding:0; border:2px solid #fff; cursor:pointer; background:none; }
+  .cat-list input.dot::-webkit-color-swatch-wrapper { padding:0; }
+  .cat-list input.dot::-webkit-color-swatch { border:0; border-radius:50%; }
+  .cat-list input.dot::-moz-color-swatch { border:0; border-radius:50%; }
+  #heatOptions select { flex:1; width:auto; }
+  button.link { border:0; background:none; padding:2px 0; color:var(--accent); font-size:12px; }
   .count { color:var(--muted); font-variant-numeric:tabular-nums; }
 
   /* My places list */
@@ -112,12 +118,21 @@
 
     <h2>Categories</h2>
     <ul id="catList" class="cat-list"></ul>
+    <button type="button" class="link" id="resetColors" hidden>Reset colours</button>
 
     <h2>Tracks</h2>
     <select id="trackView" aria-label="Show tracks as" style="margin-bottom:6px">
       <option value="lines">Show as lines</option>
       <option value="heat">Show as heatmap</option>
     </select>
+    <div class="row" id="heatOptions" hidden style="margin:0 0 6px">
+      <select id="heatStyle" aria-label="Heatmap colours"></select>
+      <select id="heatWidth" aria-label="Heatmap line width">
+        <option value="thin">Thin</option>
+        <option value="normal">Normal</option>
+        <option value="wide">Wide</option>
+      </select>
+    </div>
     <ul id="trackList" class="cat-list"></ul>
     <form id="stravaSetup" hidden>
       <p class="hint">Create an API app at strava.com/settings/api with the callback domain <b>michaeljbok.github.io</b>, then paste its details here. They stay private to your account.</p>

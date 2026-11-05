@@ -82,6 +82,9 @@ const UPLOADED_KEY = "adventuremap.uploadedTo"; // accounts this device has alre
     cloud = {
       save: (list) => { writeAll(col, list).catch(showError); },
       remove: (id) => { col.doc(id).delete().catch(showError); },
+      saveDisplay: (d) => {
+        db.collection("users").doc(user.uid).collection("settings").doc("display").set(clean(d)).catch(showError);
+      },
       saveTracks: (list) => {
         writeAll(db.collection("users").doc(user.uid).collection("tracks"), list)
           .then(() => { $("importStatus").textContent = `Saved ${list.length.toLocaleString("en-US")} tracks to your account.`; })
@@ -109,6 +112,9 @@ const UPLOADED_KEY = "adventuremap.uploadedTo"; // accounts this device has alre
 
     // Mushroom finds are read straight from Svampkartan's collection, so new finds appear here too.
     const finds = db.collection("users").doc(user.uid).collection("spots");
+    // Colours and heatmap style follow the account, so every device shows the same map.
+    unsubscribers.push(db.collection("users").doc(user.uid).collection("settings").doc("display")
+      .onSnapshot((doc) => { if (doc.exists) setDisplay(doc.data(), true); }, showError));
     unsubscribers.push(finds.onSnapshot((snap) => setMushrooms(snap.docs.map((d) => d.data())), showError));
 
     unsubscribers.push(col.onSnapshot({ includeMetadataChanges: true }, (snap) => {
