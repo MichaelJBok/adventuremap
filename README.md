@@ -13,6 +13,7 @@ sign in. They are never included in this repository. Use **Export JSON** for a b
 - `scripts/import_kmz.py`: converts a Google My Maps KMZ export to `private/adventure-places.json`, loaded with **Import JSON**
 - `scripts/import_tracks.py`: collects tracks from a Google Fusion Tables Takeout and a Strava export into `private/`, with `private/track-review.html` for reviewing them on a map (template: `scripts/track_review.html`)
 - `scripts/strava_tracks_for_app.py`: turns a Strava account export into `private/strava-tracks.json`; import it while signed in to save the tracks to `users/{uid}/tracks`. Tracks show as lines or as a heatmap
+- `scripts/route_set_for_app.py`: turns trail GPX files (for example Skåneleden's) into a planning route set in `private/`; it shows as a dashed layer, unticked at first and left out of the heatmap
 - **Import JSON or GPX** also reads a Geocaching "My Finds" GPX file, adding only new finds
 
 To run it locally, serve this folder over HTTP, for example `python3 -m http.server`.

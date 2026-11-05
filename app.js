@@ -113,7 +113,27 @@ function decodePolyline(text) {
   return coords;
 }
 
-const trackKind = (t) => TRACK_KINDS.find((k) => k.sports?.includes(t.sportType)) ?? TRACK_KINDS.at(-1);
+// Route sets (like a long-distance trail) are for planning: dashed, unticked at first, and kept out of the heatmap.
+const PLAN_COLORS = ["#EF6C00", "#AD1457", "#00838F", "#2E7D32"]; // Skåneleden is waymarked in orange
+const SEEN_PLANS_KEY = "adventuremap.seenPlans";
+const planKinds = new Map();
+
+function planKind(name) {
+  if (!planKinds.has(name)) {
+    planKinds.set(name, { name, plan: true, color: PLAN_COLORS[planKinds.size % PLAN_COLORS.length] });
+    const seen = new Set(readJson(SEEN_PLANS_KEY, []));
+    if (!seen.has(name)) {
+      hidden.add(name);
+      writeJson(HIDDEN_KEY, [...hidden]);
+      writeJson(SEEN_PLANS_KEY, [...seen, name]);
+    }
+  }
+  return planKinds.get(name);
+}
+
+const allKinds = () => [...TRACK_KINDS, ...planKinds.values()];
+const trackKind = (t) => t.plan ? planKind(t.plan)
+  : TRACK_KINDS.find((k) => k.sports?.includes(t.sportType)) ?? TRACK_KINDS.at(-1);
 
 // Live Strava syncs store one line; imported tracks can be several, split where the GPS lost signal.
 function setTracks(list) {
@@ -146,6 +166,12 @@ const kindColor = (k) => display.colors[k.name] ?? k.color;
 const sizeOf = (name) => display.sizes[name] ?? 1; // marker size for a category, line thickness for a kind of track
 const TRACK_OPACITY = 0.45; // see-through by default, so paths travelled many times build up and stand out
 const opacityOf = (name) => display.opacities[name] ?? (TRACK_KINDS.some((k) => k.name === name) ? TRACK_OPACITY : 0.9);
+const kindFeature = (t) => ({
+  type: "Feature",
+  geometry: { type: "MultiLineString", coordinates: t.lines },
+  properties: { color: kindColor(t.kind), width: sizeOf(t.kind.name), opacity: opacityOf(t.kind.name),
+    name: t.name ?? "", plan: t.plan ?? "", km: Math.round((t.distance ?? 0) / 100) / 10 },
+});
 
 function colorOf(category) {
   if (display.colors[category]) return display.colors[category];
@@ -283,18 +309,18 @@ function sourceFor(category) {
 
 function drawTracks() {
   if (!map.getSource("tracks")) return;
-  const shown = tracks.filter((t) => !hidden.has(t.kind.name));
+  const shown = tracks.filter((t) => !hidden.has(t.kind.name) && !t.plan);
+  map.getSource("plans").setData({
+    type: "FeatureCollection",
+    features: tracks.filter((t) => t.plan && !hidden.has(t.kind.name)).map(kindFeature),
+  });
   const heat = trackView === "heat";
   map.getSource("tracks").setData({
     type: "FeatureCollection",
-    features: shown.map((t) => ({
-      type: "Feature",
-      geometry: { type: "MultiLineString", coordinates: t.lines },
-      properties: { color: kindColor(t.kind), width: sizeOf(t.kind.name), opacity: opacityOf(t.kind.name) },
-    })),
+    features: shown.map(kindFeature),
   });
   if (heat && !heatPoints) {
-    heatPoints = tracks.map((t) => ({ kind: t.kind.name, points: t.lines.flatMap(alongLine) }));
+    heatPoints = tracks.filter((t) => !t.plan).map((t) => ({ kind: t.kind.name, points: t.lines.flatMap(alongLine) }));
   }
   map.getSource("heat").setData({
     type: "FeatureCollection",
@@ -340,6 +366,10 @@ map.on("load", () => {
   map.addLayer({ id: "tracks", type: "line", source: "tracks", layout: { "line-cap": "round", "line-join": "round" },
     paint: { "line-color": ["get", "color"], "line-opacity": 0.45,
       "line-width": ["interpolate", ["linear"], ["zoom"], 5, ["*", 1, ["get", "width"]], 14, ["*", 2.5, ["get", "width"]]] } });
+  map.addSource("plans", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({ id: "plans", type: "line", source: "plans", layout: { "line-cap": "butt", "line-join": "round" },
+    paint: { "line-color": ["get", "color"], "line-opacity": ["get", "opacity"], "line-dasharray": [2, 1.5],
+      "line-width": ["interpolate", ["linear"], ["zoom"], 5, ["*", 1.5, ["get", "width"]], 14, ["*", 3.5, ["get", "width"]]] } });
   // Heat builds where tracks overlap, from one pass through to the most worn paths. drawTracks sets its colours.
   map.addSource("heat", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "heat", type: "heatmap", source: "heat", maxzoom: 13, layout: { visibility: "none" },
@@ -370,7 +400,8 @@ const mineAt = (p) => map.queryRenderedFeatures(p, { layers: mineLayers() })[0]
 
 map.on("mousemove", (e) => {
   if (placing || draft) return;
-  map.getCanvas().style.cursor = mineAt(e.point) || labelAt(e.point) ? "pointer" : "";
+  const route = map.getLayer("plans") && map.queryRenderedFeatures(near(e.point), { layers: ["plans"] }).length;
+  map.getCanvas().style.cursor = mineAt(e.point) || route || labelAt(e.point) ? "pointer" : "";
 });
 
 map.on("click", async (e) => {
@@ -382,7 +413,7 @@ map.on("click", async (e) => {
     map.easeTo({ center: mine.geometry.coordinates, zoom: zoom + 0.5 });
   } else if (mine) {
     showPlace(mine.properties.id);
-  } else {
+  } else if (!showRoute(e)) {
     const label = labelAt(e.point);
     if (label) showLabel(label, e.lngLat);
     else popup?.remove();
@@ -390,6 +421,15 @@ map.on("click", async (e) => {
 });
 
 // --- Popups ---
+// A planning route: which stage it is and how long.
+function showRoute(e) {
+  const route = map.getLayer("plans") && map.queryRenderedFeatures(near(e.point), { layers: ["plans"] })[0];
+  if (!route) return false;
+  const { name, plan, km } = route.properties;
+  openPopup(e.lngLat, `<div class="pop-title">${esc(name)}</div><div class="pop-meta">${esc(plan)} · ${km} km</div>`);
+  return true;
+}
+
 function openPopup(lngLat, html) {
   popup?.remove();
   popup = new maplibregl.Popup({ offset: 12, maxWidth: "280px" }).setLngLat(lngLat).setHTML(html).addTo(map);
@@ -511,10 +551,11 @@ let styling = null; // the category or kind of track the style panel is changing
 
 function openStylePanel(button) {
   styling = button.dataset.style;
-  const isTrack = !!TRACK_KINDS.find((k) => k.name === styling);
+  const kind = allKinds().find((k) => k.name === styling);
+  const isTrack = !!kind;
   $("styleTitle").textContent = styling;
   $("styleSizeLabel").textContent = isTrack ? "Line thickness" : "Marker size";
-  $("styleColor").value = isTrack ? kindColor(TRACK_KINDS.find((k) => k.name === styling)) : colorOf(styling);
+  $("styleColor").value = isTrack ? kindColor(kind) : colorOf(styling);
   $("styleSize").value = sizeOf(styling);
   $("styleOpacity").value = opacityOf(styling);
   const panel = $("stylePanel");
@@ -554,7 +595,7 @@ function renderCategories() {
 }
 
 function renderTrackKinds() {
-  $("trackList").innerHTML = TRACK_KINDS.map((k) => `<li><label>
+  $("trackList").innerHTML = allKinds().map((k) => `<li><label>
     <input type="checkbox" data-cat="${esc(k.name)}"${hidden.has(k.name) ? "" : " checked"}>
     ${colorPicker(k.name, kindColor(k))}<span>${esc(k.name)}</span>
     <span class="count">${tracks.filter((t) => t.kind === k).length.toLocaleString("en-US")}</span></label></li>`).join("");
