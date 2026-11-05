@@ -19,7 +19,7 @@ const HEAT_STYLES = {
   ink: { name: "Ink", line: "#212121", ramp: ["rgba(33,33,33,0.15)", "rgba(33,33,33,0.3)", "rgba(33,33,33,0.5)", "rgba(33,33,33,0.7)", "rgba(0,0,0,0.9)"] },
 };
 const HEAT_WIDTHS = { thin: 0.6, normal: 1, wide: 1.7 };
-const DEFAULT_DISPLAY = { colors: {}, sizes: {}, heatStyle: "fire", heatWidth: "normal" };
+const DEFAULT_DISPLAY = { colors: {}, sizes: {}, opacities: {}, heatStyle: "fire", heatWidth: "normal" };
 const HEAT_STEP_M = 50; // heatmap points are spaced evenly along each track, so time spent in one spot doesn't count extra
 const NEW_CATEGORY = "__new__";
 const TRACK_KINDS = [
@@ -144,6 +144,8 @@ const addableCategories = () => categories().filter((c) => c !== MUSHROOMS);
 
 const kindColor = (k) => display.colors[k.name] ?? k.color;
 const sizeOf = (name) => display.sizes[name] ?? 1; // marker size for a category, line thickness for a kind of track
+const TRACK_OPACITY = 0.45; // see-through by default, so paths travelled many times build up and stand out
+const opacityOf = (name) => display.opacities[name] ?? (TRACK_KINDS.some((k) => k.name === name) ? TRACK_OPACITY : 0.9);
 
 function colorOf(category) {
   if (display.colors[category]) return display.colors[category];
@@ -288,7 +290,7 @@ function drawTracks() {
     features: shown.map((t) => ({
       type: "Feature",
       geometry: { type: "MultiLineString", coordinates: t.lines },
-      properties: { color: kindColor(t.kind), width: sizeOf(t.kind.name) },
+      properties: { color: kindColor(t.kind), width: sizeOf(t.kind.name), opacity: opacityOf(t.kind.name) },
     })),
   });
   if (heat && !heatPoints) {
@@ -304,7 +306,7 @@ function drawTracks() {
   map.setLayoutProperty("heat", "visibility", heat ? "visible" : "none");
   map.setPaintProperty("tracks", "line-color", heat ? HEAT_STYLES[display.heatStyle].line : ["get", "color"]);
   map.setPaintProperty("tracks", "line-opacity", heat
-    ? ["interpolate", ["linear"], ["zoom"], 11.5, 0, 13, 0.3] : 0.45);
+    ? ["interpolate", ["linear"], ["zoom"], 11.5, 0, 13, 0.3] : ["get", "opacity"]);
   const style = HEAT_STYLES[display.heatStyle];
   const width = HEAT_WIDTHS[display.heatWidth];
   map.setPaintProperty("heat", "heatmap-color", ["interpolate", ["linear"], ["heatmap-density"], 0, "rgba(0,0,0,0)",
@@ -319,10 +321,13 @@ function drawPlaces() {
   for (const [category, id] of sourceIds) {
     map.getSource(id).setData(placesGeoJson(category));
     const size = sizeOf(category);
+    map.setPaintProperty(`${id}-points`, "circle-opacity", opacityOf(category));
+    map.setPaintProperty(`${id}-points`, "circle-stroke-opacity", opacityOf(category));
     const clustered = category !== ALWAYS_VISIBLE;
     map.setPaintProperty(`${id}-points`, "circle-radius",
       ["interpolate", ["linear"], ["zoom"], 3, (clustered ? 3.5 : 7) * size, 10, (clustered ? 7 : 12) * size]);
     if (!clustered) continue;
+    map.setPaintProperty(`${id}-clusters`, "circle-opacity", opacityOf(category));
     map.setPaintProperty(`${id}-clusters`, "circle-radius", ["step", ["get", "point_count"], 13 * size, 25, 17 * size, 200, 22 * size]);
     map.setPaintProperty(`${id}-clusters`, "circle-color", colorOf(category));
     map.setPaintProperty(`${id}-counts`, "text-color", textOn(colorOf(category)));
@@ -511,6 +516,7 @@ function openStylePanel(button) {
   $("styleSizeLabel").textContent = isTrack ? "Line thickness" : "Marker size";
   $("styleColor").value = isTrack ? kindColor(TRACK_KINDS.find((k) => k.name === styling)) : colorOf(styling);
   $("styleSize").value = sizeOf(styling);
+  $("styleOpacity").value = opacityOf(styling);
   const panel = $("stylePanel");
   panel.hidden = false;
   const at = button.getBoundingClientRect();
@@ -524,13 +530,15 @@ function closeStylePanel() {
   styling = null;
 }
 
+const customised = () => ["colors", "sizes", "opacities"].some((k) => Object.keys(display[k]).length);
+
 function setDisplay(change, fromAccount = false) {
   display = { ...DEFAULT_DISPLAY, ...display, ...change };
   writeJson(DISPLAY_KEY, display);
   if (!fromAccount) cloud?.saveDisplay(display);
   $("heatStyle").value = display.heatStyle;
   $("heatWidth").value = display.heatWidth;
-  $("resetColors").hidden = !Object.keys(display.colors).length && !Object.keys(display.sizes).length;
+  $("resetColors").hidden = !customised();
   renderAll();
   renderTrackKinds();
   drawTracks();
@@ -556,7 +564,8 @@ $("trackView").value = trackView;
 $("heatStyle").append(...Object.entries(HEAT_STYLES).map(([id, s]) => new Option(s.name, id)));
 $("heatStyle").onchange = () => setDisplay({ heatStyle: $("heatStyle").value });
 $("heatWidth").onchange = () => setDisplay({ heatWidth: $("heatWidth").value });
-$("resetColors").onclick = () => setDisplay({ colors: {}, sizes: {} });
+$("resetColors").onclick = () => setDisplay({ colors: {}, sizes: {}, opacities: {} });
+$("styleOpacity").oninput = () => setDisplay({ opacities: { ...display.opacities, [styling]: Number($("styleOpacity").value) } });
 $("styleColor").oninput = () => setDisplay({ colors: { ...display.colors, [styling]: $("styleColor").value } });
 $("styleSize").oninput = () => setDisplay({ sizes: { ...display.sizes, [styling]: Number($("styleSize").value) } });
 $("styleDone").onclick = closeStylePanel;
@@ -686,7 +695,7 @@ $("importFile").onchange = async (e) => {
 
 $("heatStyle").value = display.heatStyle;
 $("heatWidth").value = display.heatWidth;
-$("resetColors").hidden = !Object.keys(display.colors).length && !Object.keys(display.sizes).length;
+$("resetColors").hidden = !customised();
 renderCategories();
 renderTrackKinds();
 renderList();
