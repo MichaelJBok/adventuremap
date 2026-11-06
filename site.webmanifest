@@ -15,7 +15,18 @@
       "files": [
         {
           "name": "tracks",
-          "accept": [".fit", ".gpx", "application/vnd.ant.fit", "application/fit", "application/gpx+xml", "application/xml", "text/xml", "application/octet-stream"]
+          "accept": [
+            ".fit",
+            ".gpx",
+            "application/vnd.ant.fit",
+            "application/fit",
+            "application/gpx+xml",
+            "application/gpx",
+            "application/xml",
+            "text/xml",
+            "application/octet-stream",
+            "*/*"
+          ]
         }
       ]
     }
