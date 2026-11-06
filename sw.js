@@ -12,7 +12,8 @@ self.addEventListener("fetch", (e) => {
     const form = await e.request.formData();
     const cache = await caches.open(SHARE_CACHE);
     let i = 0;
-    for (const file of form.getAll("tracks")) {
+    // Any file field counts, in case the sharing app names it differently.
+    for (const file of [...form.values()].filter((v) => v instanceof File)) {
       await cache.put(`shared/${Date.now()}-${i++}`,
         new Response(file, { headers: { "x-name": encodeURIComponent(file.name || "shared.fit") } }));
     }

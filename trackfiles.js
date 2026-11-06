@@ -69,7 +69,8 @@ function readFit(buffer) {
 
 function readGpx(text) {
   const doc = new DOMParser().parseFromString(text, "application/xml");
-  const pts = [...doc.getElementsByTagNameNS("*", "trkpt")];
+  const trkpts = [...doc.getElementsByTagNameNS("*", "trkpt")];
+  const pts = trkpts.length ? trkpts : [...doc.getElementsByTagNameNS("*", "rtept")]; // some apps export a route instead
   const time = pts.map((p) => p.getElementsByTagNameNS("*", "time")[0]?.textContent).find(Boolean);
   const type = (doc.getElementsByTagNameNS("*", "type")[0]?.textContent ?? "").toLowerCase();
   const sport = [["run", "Run"], ["hik", "Hike"], ["walk", "Walk"], ["cycl", "Ride"], ["bik", "Ride"], ["rid", "Ride"]]
@@ -105,9 +106,11 @@ function simplifyLine(pts) {
 
 // A track from a FIT or GPX file. Its id comes from the start time, so sharing the same file twice adds it once.
 async function readTrackFile(file) {
-  const fit = /\.fit$/i.test(file.name);
-  const read = fit ? readFit(await file.arrayBuffer()) : readGpx(await file.text());
-  if (read.points.length < 2) throw new Error(`${file.name} has no GPS route`);
+  // Judged by content, since a shared file's name may lack its extension: FIT files carry ".FIT" at byte 8.
+  const buffer = await file.arrayBuffer();
+  const fit = buffer.byteLength >= 12 && new TextDecoder().decode(new Uint8Array(buffer, 8, 4)) === ".FIT";
+  const read = fit ? readFit(buffer) : readGpx(new TextDecoder().decode(buffer));
+  if (read.points.length < 2) throw new Error(`“${file.name}” has no GPS route that could be read.`);
   // A gap of over 3 km between fixes is lost signal, so the line breaks there instead of jumping.
   const lines = [[read.points[0]]];
   for (let i = 1; i < read.points.length; i++) {
@@ -131,22 +134,28 @@ async function importTrackFiles(files) {
   for (const file of files) {
     try { found.push(await readTrackFile(file)); } catch (e) { failed.push(e.message); }
   }
-  const message = [found.length ? importTracks(found) : "", ...failed].filter(Boolean).join(" ");
+  let message = failed.join(" ");
+  try {
+    if (found.length) message = [importTracks(found), message].filter(Boolean).join(" ");
+  } catch (e) {
+    message = `The track couldn't be saved: ${e.message}`;
+  }
   $("importStatus").textContent = message;
   const newest = found.sort((a, b) => b.date.localeCompare(a.date))[0];
-  if (newest) {
-    const t = { ...newest, kind: trackKind(newest), lines: newest.polylines.map(decodePolyline) };
-    const pts = t.lines.flat();
-    const lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1]);
-    map.fitBounds([[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]], { padding: 60, maxZoom: 15 });
-    map.once("moveend", () => {
-      const el = openPopup(map.getCenter(), `<div class="pop-title">${esc(t.name)}</div>
-        <div class="pop-meta">${esc(trackMeta(t))}</div><p class="pop-notes">${esc(message)}</p>`);
-      highlightTrack(t);
-      popup.once("close", () => highlightTrack(null));
-      return el;
-    });
+  if (!newest) {
+    // The side panel is often hidden on a phone, so the result always shows on the map.
+    openPopup(map.getCenter(), `<div class="pop-title">Nothing was added</div><p class="pop-notes">${esc(message)}</p>`);
+    return message;
   }
+  const t = { ...newest, kind: trackKind(newest), lines: newest.polylines.map(decodePolyline) };
+  const pts = t.lines.flat();
+  const lons = pts.map((p) => p[0]), lats = pts.map((p) => p[1]);
+  const bounds = [[Math.min(...lons), Math.min(...lats)], [Math.max(...lons), Math.max(...lats)]];
+  map.fitBounds(bounds, { padding: 60, maxZoom: 15 });
+  openPopup([(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2],
+    `<div class="pop-title">${esc(t.name)}</div><div class="pop-meta">${esc(trackMeta(t))}</div><p class="pop-notes">${esc(message)}</p>`);
+  highlightTrack(t);
+  popup.once("close", () => highlightTrack(null));
   return message;
 }
 
@@ -155,16 +164,22 @@ let sharedWaiting = new URLSearchParams(location.search).has("shared");
 if (sharedWaiting) history.replaceState(null, "", location.pathname);
 
 async function takeSharedFiles() {
-  if (!sharedWaiting || !("caches" in window)) return;
+  if (!sharedWaiting) return;
   sharedWaiting = false;
-  const cache = await caches.open(SHARE_CACHE);
-  const files = [];
-  for (const request of await cache.keys()) {
-    const response = await cache.match(request);
-    files.push(new File([await response.blob()], decodeURIComponent(response.headers.get("x-name") ?? "shared.fit")));
-    await cache.delete(request);
+  try {
+    const cache = await caches.open(SHARE_CACHE);
+    const files = [];
+    for (const request of await cache.keys()) {
+      const response = await cache.match(request);
+      files.push(new File([await response.blob()], decodeURIComponent(response.headers.get("x-name") ?? "shared file")));
+      await cache.delete(request);
+    }
+    if (files.length) await importTrackFiles(files);
+    else openPopup(map.getCenter(), `<div class="pop-title">No file arrived</div>
+      <p class="pop-notes">The share opened Adventure Map, but no file came with it. Try sharing again.</p>`);
+  } catch (e) {
+    openPopup(map.getCenter(), `<div class="pop-title">The shared file couldn't be read</div><p class="pop-notes">${esc(e.message)}</p>`);
   }
-  if (files.length) await importTrackFiles(files);
 }
 
 // Called by sync.js once sign-in has settled and my tracks have loaded (or there's no account).
