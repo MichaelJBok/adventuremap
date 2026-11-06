@@ -74,6 +74,7 @@ const UPLOADED_KEY = "adventuremap.uploadedTo"; // accounts this device has alre
         saveLocal(); setMushrooms([]); setTracks([]);
       }
       renderStrava(null, false);
+      accountReady(false);
       setStatus("");
       return;
     }

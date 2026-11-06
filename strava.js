@@ -146,7 +146,11 @@ function startStrava(db, userDoc) {
     else if (stravaReturn) setStravaStatus(stravaReturn.denied ? "Strava access was not approved." : "That Strava sign-in didn't match. Try connecting again.");
     else syncIfStale();
   }, (e) => setStravaStatus(`Sync problem: ${e.message}`));
-  const stopTracks = tracksCol.onSnapshot((snap) => setTracks(snap.docs.map((d) => d.data())),
+  let tracksLoaded = false;
+  const stopTracks = tracksCol.onSnapshot((snap) => {
+    setTracks(snap.docs.map((d) => d.data()));
+    if (!tracksLoaded) { tracksLoaded = true; accountReady(true); } // shared files can be stored now
+  },
     (e) => setStravaStatus(`Sync problem: ${e.message}`));
 
   return () => { stopSettings(); stopTracks(); document.removeEventListener("visibilitychange", onVisible); };

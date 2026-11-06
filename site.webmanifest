@@ -7,6 +7,19 @@
   "display": "standalone",
   "background_color": "#EFE3D0",
   "theme_color": "#EFE3D0",
+  "share_target": {
+    "action": "share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "files": [
+        {
+          "name": "tracks",
+          "accept": [".fit", ".gpx", "application/vnd.ant.fit", "application/fit", "application/gpx+xml", "application/xml", "text/xml", "application/octet-stream"]
+        }
+      ]
+    }
+  },
   "icons": [
     {
       "src": "icon-192.png",

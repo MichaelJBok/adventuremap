@@ -1002,25 +1002,36 @@ function importFinds(finds) {
 function importTracks(list) {
   const all = list.filter((t) => t.id && t.polylines?.length);
   if (!all.length) throw new Error("no tracks in this file");
-  // Tracks already here keep any edits, and deleted ones stay deleted.
-  const valid = all.filter((t) => !knownTrackIds.has(t.id));
-  if (!valid.length) return `All ${all.length.toLocaleString("en-US")} tracks in this file are already here.`;
+  // Tracks already here keep any edits, and deleted ones stay deleted. The same outing from another source
+  // (a watch file and a Strava export) has a different id, so it's matched by day and distance instead.
+  const sameOuting = (a, b) => a.date && (a.date ?? "").slice(0, 10) === (b.date ?? "").slice(0, 10)
+    && Math.abs(a.distance - b.distance) <= 0.03 * Math.max(a.distance, b.distance);
+  const valid = all.filter((t) => !knownTrackIds.has(t.id) && !tracks.some((x) => sameOuting(t, x)));
+  const count = (n) => `${n.toLocaleString("en-US")} ${n === 1 ? "track" : "tracks"}`;
+  if (!valid.length) return all.length === 1 ? "This track is already here." : `All ${count(all.length)} are already here.`;
   if (!cloud) {
     setTracks([...tracks, ...valid]);
-    return `Showing ${valid.length.toLocaleString("en-US")} tracks until you reload. Sign in first to keep them.`;
+    return `Showing ${count(valid.length)} until you reload. Sign in first to keep them.`;
   }
   cloud.saveTracks(valid);
-  return `Saving ${valid.length.toLocaleString("en-US")} tracks to your account…`;
+  return `Saving ${count(valid.length)} to your account…`;
 }
 
 $("importBtn").onclick = () => $("importFile").click();
 $("importFile").onchange = async (e) => {
-  const file = e.target.files[0];
+  const files = [...e.target.files];
   e.target.value = "";
-  if (!file) return;
+  if (!files.length) return;
+  const file = files[0];
   try {
-    if (file.name.toLowerCase().endsWith(".gpx")) {
+    // Geocaching's GPX lists finds; any other GPX, and any FIT file, is a workout from a watch.
+    const finds = /\.gpx$/i.test(file.name) && /groundspeak/i.test(await file.slice(0, 2000).text());
+    if (finds) {
       $("importStatus").textContent = importFinds(parseFinds(await file.text()));
+      return;
+    }
+    if (/\.(fit|gpx)$/i.test(file.name)) {
+      await importTrackFiles(files.filter((f) => /\.(fit|gpx)$/i.test(f.name)));
       return;
     }
     const data = JSON.parse(await file.text());

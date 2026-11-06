@@ -190,8 +190,8 @@
 
     <div class="row">
       <button type="button" id="exportBtn">Export JSON</button>
-      <button type="button" id="importBtn">Import JSON or GPX</button>
-      <input type="file" id="importFile" accept="application/json,.json,.gpx" hidden>
+      <button type="button" id="importBtn">Import file</button>
+      <input type="file" id="importFile" accept="application/json,.json,.gpx,.fit" multiple hidden>
     </div>
     <p class="hint" id="importStatus" aria-live="polite"></p>
     <p class="hint" style="margin-top:12px">Signed out, places stay only in this browser. Export now and then as a backup. To update geocaches, import a Geocaching My Finds GPX file; only new finds are added.</p>
@@ -212,11 +212,12 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <!-- Change ?v= on every release so browsers load the new scripts together with this page. -->
-<script src="app.js?v=20261106b"></script>
+<script src="app.js?v=20261106c"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="strava.js?v=20261106b"></script>
-<script src="sync.js?v=20261106b"></script>
+<script src="trackfiles.js?v=20261106c"></script>
+<script src="strava.js?v=20261106c"></script>
+<script src="sync.js?v=20261106c"></script>
 </body>
 </html>
