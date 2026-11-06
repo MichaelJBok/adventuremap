@@ -96,6 +96,22 @@ function categories() {
   return [...new Set([...Object.keys(BASE_COLORS), ...places.map((p) => p.category)])];
 }
 
+// The reverse, for tracks I've trimmed.
+function encodePolyline(coords) {
+  let out = "", lastLat = 0, lastLon = 0;
+  const put = (value) => {
+    value = value < 0 ? ~(value << 1) : value << 1;
+    while (value >= 0x20) { out += String.fromCharCode((0x20 | (value & 31)) + 63); value >>= 5; }
+    out += String.fromCharCode(value + 63);
+  };
+  for (const [lon, lat] of coords) {
+    const y = Math.round(lat * 1e5), x = Math.round(lon * 1e5);
+    put(y - lastLat); put(x - lastLon);
+    lastLat = y; lastLon = x;
+  }
+  return out;
+}
+
 // Encoded route lines from Strava, as [lon, lat] pairs.
 function decodePolyline(text) {
   const coords = [];
@@ -493,7 +509,8 @@ map.on("load", () => {
   // The track picked on the map, drawn over the rest.
   map.addSource("picked", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "picked", type: "line", source: "picked", layout: { "line-cap": "round", "line-join": "round" },
-    paint: { "line-color": "#00B8D4", "line-width": 6, "line-opacity": 0.9 } }); // cyan, unlike any road on the map
+    // Cyan, unlike any road on the map; while trimming, the part to be removed is red.
+    paint: { "line-color": ["coalesce", ["get", "pick"], "#00B8D4"], "line-width": 6, "line-opacity": 0.9 } });
   // Heat builds where tracks overlap, from one pass through to the most worn paths. drawTracks sets its colours.
   map.addSource("heat", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
   map.addLayer({ id: "heat", type: "heatmap", source: "heat", maxzoom: 13, layout: { visibility: "none" },
@@ -585,15 +602,95 @@ function showTrack(t, at) {
   const el = openPopup(at, `<div class="pop-title">${esc(t.name || "Untitled")}</div>
     <div class="pop-meta">${esc(trackMeta(t))}</div>
     <div class="row"><button type="button" id="trackEdit">Edit</button>
-    <button type="button" id="trackDelete">Delete</button></div>`);
+    <button type="button" id="trackTrim">Trim</button>
+    <button type="button" id="trackDelete">Delete</button></div>
+    ${t.originalPolylines ? `<button type="button" class="link" id="trackRestore">Restore the untrimmed track</button>` : ""}`);
   highlightTrack(t); // after openPopup, whose closing of the previous popup clears the highlight
   popup.once("close", () => highlightTrack(null));
   el.querySelector("#trackEdit").onclick = () => editTrack(t, at);
+  el.querySelector("#trackTrim").onclick = () => trimTrack(t, at);
+  const restore = el.querySelector("#trackRestore");
+  if (restore) restore.onclick = () => {
+    const { kind, lines, originalPolylines, originalDistance, ...stored } = t;
+    const doc = { ...stored, polylines: originalPolylines, distance: originalDistance ?? t.distance };
+    saveTrack(doc);
+    showTrack({ ...doc, kind, lines: originalPolylines.map(decodePolyline) }, at);
+  };
   el.querySelector("#trackDelete").onclick = () => {
     if (!confirm(`Delete “${t.name || "this track"}”? It won't come back with a later import.`)) return;
     popup.remove();
     // A small marker stays behind with the id, so importing the same export later doesn't restore it.
     saveTrack({ id: t.id, deleted: true });
+  };
+}
+
+// Each point of a track with its distance along it, so sliders can pick a stretch by distance.
+function measureTrack(t) {
+  let d = 0;
+  return t.lines.map((line) => line.map((p, i) => {
+    if (i) d += metres({ lat: line[i - 1][1], lon: line[i - 1][0] }, { lat: p[1], lon: p[0] });
+    return { p, d };
+  }));
+}
+
+// The parts of a track between distances a and b (inside), or outside them, as lines of 2+ points.
+function stretches(measured, a, b, inside) {
+  const out = [];
+  for (const line of measured) {
+    let run = [];
+    for (const { p, d } of line) {
+      if ((d >= a && d <= b) === inside) run.push(p);
+      else { if (run.length > 1) out.push(run); run = []; }
+    }
+    if (run.length > 1) out.push(run);
+  }
+  return out;
+}
+
+const lineLength = (lines) => lines.reduce((sum, line) =>
+  sum + line.slice(1).reduce((s, p, i) => s + metres({ lat: line[i][1], lon: line[i][0] }, { lat: p[1], lon: p[0] }), 0), 0);
+
+function trimTrack(t, at) {
+  const measured = measureTrack(t);
+  const total = measured.at(-1).at(-1).d;
+  const km = (m) => `${(m / 1000).toFixed(2)} km`;
+  const el = openPopup(at, `<form id="trimForm">
+    <div class="pop-title">Trim ${esc(t.name || "track")}</div>
+    <label class="check"><input type="radio" name="trimMode" value="keep" checked> Keep only the part between</label>
+    <label class="check"><input type="radio" name="trimMode" value="cut"> Remove the part between</label>
+    <label for="trimFrom">From <span id="trimFromKm"></span></label><input type="range" id="trimFrom" min="0" max="1000" value="0">
+    <label for="trimTo">To <span id="trimToKm"></span></label><input type="range" id="trimTo" min="0" max="1000" value="1000">
+    <div class="pop-meta" id="trimResult"></div>
+    <div class="row"><button type="submit" class="primary">Save</button><button type="button" id="trimCancel">Cancel</button></div></form>`);
+  popup.once("close", () => highlightTrack(null));
+  const q = (s) => el.querySelector(s);
+  let kept = t.lines;
+  const preview = () => {
+    let a = q("#trimFrom").value / 1000 * total, b = q("#trimTo").value / 1000 * total;
+    if (a > b) [a, b] = [b, a];
+    const keep = q("input[name=trimMode]:checked").value === "keep";
+    kept = stretches(measured, a, b, keep);
+    const removed = stretches(measured, a, b, !keep);
+    q("#trimFromKm").textContent = km(a);
+    q("#trimToKm").textContent = km(b);
+    q("#trimResult").textContent = kept.length ? `Keeps ${km(lineLength(kept))} of ${km(total)}` : "Nothing would be left";
+    q("button[type=submit]").disabled = !kept.length;
+    const feature = (lines, color) => ({ type: "Feature", properties: { pick: color }, geometry: { type: "MultiLineString", coordinates: lines } });
+    map.getSource("picked")?.setData({ type: "FeatureCollection",
+      features: [feature(kept, "#00B8D4"), feature(removed, "#E53935")].filter((f) => f.geometry.coordinates.length) });
+  };
+  el.querySelectorAll("input").forEach((input) => { input.oninput = preview; });
+  preview();
+  q("#trimCancel").onclick = () => showTrack(t, at);
+  q("#trimForm").onsubmit = (e) => {
+    e.preventDefault();
+    const { kind, lines, polyline, ...stored } = t;
+    // The first trim keeps the original line, so it can be restored later.
+    const original = t.originalPolylines ?? t.polylines ?? [polyline];
+    const doc = { ...stored, polylines: kept.map(encodePolyline), distance: Math.round(lineLength(kept)),
+      originalPolylines: original, originalDistance: t.originalDistance ?? t.distance };
+    saveTrack(doc);
+    showTrack({ ...doc, kind, lines: kept }, at);
   };
 }
 

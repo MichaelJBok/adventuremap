@@ -76,6 +76,10 @@
   .maplibregl-popup-content .row { margin-top:8px; }
   .maplibregl-popup-content button { padding:4px 10px; }
   .maplibregl-popup-content label { margin-top:6px; }
+  .maplibregl-popup-content label.check { display:flex; gap:6px; align-items:center; font-weight:normal; font-size:13px; }
+  .maplibregl-popup-content label.check input, .maplibregl-popup-content input[type=range] { width:auto; margin:0; padding:0; border:0; }
+  .maplibregl-popup-content input[type=range] { width:100%; }
+  .maplibregl-popup-content button.link { display:block; margin-top:6px; }
   .pop-list { list-style:none; margin:6px 0 0; padding:0; }
   .pop-list li { padding:3px 0; border-bottom:1px solid var(--border); }
   .pop-list button.link { font-size:14px; text-align:left; display:block; }
@@ -208,11 +212,11 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <!-- Change ?v= on every release so browsers load the new scripts together with this page. -->
-<script src="app.js?v=20261106a"></script>
+<script src="app.js?v=20261106b"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="strava.js?v=20261106a"></script>
-<script src="sync.js?v=20261106a"></script>
+<script src="strava.js?v=20261106b"></script>
+<script src="sync.js?v=20261106b"></script>
 </body>
 </html>
