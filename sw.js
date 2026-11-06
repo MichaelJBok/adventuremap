@@ -17,6 +17,9 @@ self.addEventListener("fetch", (e) => {
       await cache.put(`shared/${Date.now()}-${i++}`,
         new Response(file, { headers: { "x-name": encodeURIComponent(file.name || "shared.fit") } }));
     }
+    // Text or a link shared alongside (or instead of) a file, kept so the app can say what arrived.
+    const words = ["title", "text", "url"].map((k) => form.get(k)).filter((v) => typeof v === "string" && v).join(" ");
+    if (words) await cache.put(`shared/${Date.now()}-text`, new Response(words, { headers: { "x-name": "shared-text", "x-text": "1" } }));
     return Response.redirect("./?shared", 303);
   })());
 });

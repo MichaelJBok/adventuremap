@@ -110,7 +110,11 @@ async function readTrackFile(file) {
   const buffer = await file.arrayBuffer();
   const fit = buffer.byteLength >= 12 && new TextDecoder().decode(new Uint8Array(buffer, 8, 4)) === ".FIT";
   const read = fit ? readFit(buffer) : readGpx(new TextDecoder().decode(buffer));
-  if (read.points.length < 2) throw new Error(`“${file.name}” has no GPS route that could be read.`);
+  if (read.points.length < 2) {
+    // Show the start of what arrived, since a share can carry a link or message instead of a workout file.
+    const sample = fit ? "" : new TextDecoder().decode(buffer.slice(0, 300)).replace(/\s+/g, " ").trim();
+    throw new Error(`“${file.name}” has no GPS route that could be read.${sample ? ` It contained: “${sample}”` : ""}`);
+  }
   // A gap of over 3 km between fixes is lost signal, so the line breaks there instead of jumping.
   const lines = [[read.points[0]]];
   for (let i = 1; i < read.points.length; i++) {
@@ -169,14 +173,17 @@ async function takeSharedFiles() {
   try {
     const cache = await caches.open(SHARE_CACHE);
     const files = [];
+    let words = "";
     for (const request of await cache.keys()) {
       const response = await cache.match(request);
+      if (response.headers.get("x-text")) { words = await response.text(); await cache.delete(request); continue; }
       files.push(new File([await response.blob()], decodeURIComponent(response.headers.get("x-name") ?? "shared file")));
       await cache.delete(request);
     }
     if (files.length) await importTrackFiles(files);
     else openPopup(map.getCenter(), `<div class="pop-title">No file arrived</div>
-      <p class="pop-notes">The share opened Adventure Map, but no file came with it. Try sharing again.</p>`);
+      <p class="pop-notes">The share opened Adventure Map, but no file came with it${words ? `, only this: “${esc(words.slice(0, 300))}”` : ""}.
+      In the Suunto app, export the workout as GPX or FIT, then share that file.</p>`);
   } catch (e) {
     openPopup(map.getCenter(), `<div class="pop-title">The shared file couldn't be read</div><p class="pop-notes">${esc(e.message)}</p>`);
   }
