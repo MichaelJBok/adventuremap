@@ -9,6 +9,7 @@ const HIDDEN_KEY = "adventuremap.hiddenCategories";
 const VIEW_KEY = "adventuremap.view";
 const MENU_KEY = "adventuremap.menuHidden";
 const TRACK_VIEW_KEY = "adventuremap.trackView";
+const BASE_OPEN_KEY = "adventuremap.baseOptionsOpen";
 const DISPLAY_KEY = "adventuremap.display"; // chosen colours and heatmap style; synced to the account when signed in
 // Each heatmap style runs from one pass to the most worn paths; `line` draws the tracks up close.
 const HEAT_STYLES = {
@@ -351,6 +352,10 @@ function renderBaseControls() {
   $("basemap").value = b.map;
   for (const key of BASE_SWITCHES) $(`base-${key}`).checked = b[key];
   $("baseFade").value = b.fade;
+  // While folded away, the button still says what's on.
+  const changes = [!b.labels && "no labels", !b.roads && "no roads", b.hillshade && "hillshade",
+    b.hiking && "trails", b.cycling && "cycle routes", b.fade > 0 && "faded"].filter(Boolean);
+  $("baseSummary").textContent = [$("basemap").selectedOptions[0].text, ...changes].join(" · ");
 }
 
 function applyBase() {
@@ -852,6 +857,8 @@ $("search").oninput = renderList;
 
 function renderAll() { drawPlaces(); renderCategories(); renderList(); }
 
+$("baseBox").open = readJson(BASE_OPEN_KEY, false);
+$("baseBox").ontoggle = () => writeJson(BASE_OPEN_KEY, $("baseBox").open);
 const setBase = (change) => setDisplay({ base: { ...baseOptions(), ...change } });
 $("basemap").onchange = () => setBase({ map: $("basemap").value });
 for (const key of BASE_SWITCHES) $(`base-${key}`).onchange = (e) => setBase({ [key]: e.target.checked });

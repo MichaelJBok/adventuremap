@@ -38,6 +38,14 @@
   .cat-list label { display:grid; grid-template-columns:auto auto 1fr auto; gap:8px; align-items:center; margin:0; padding:5px 0; font-weight:normal; font-size:14px; }
   .cat-list input { width:auto; margin:0; }
   .base-list { margin-top:6px; }
+  #baseBox { border:1px solid var(--border); border-radius:6px; background:#fff; }
+  #baseBox summary { display:flex; gap:8px; align-items:baseline; padding:7px 10px; cursor:pointer; }
+  #baseBox summary small { color:var(--muted); margin-left:auto; text-align:right; }
+  #baseBox summary::after { content:"▾"; color:var(--muted); }
+  #baseBox[open] summary::after { content:"▴"; }
+  #baseBox summary::-webkit-details-marker { display:none; }
+  #baseBox[open] { padding:0 10px 10px; }
+  #baseBox[open] summary { padding:7px 0; border-bottom:1px solid var(--border); margin-bottom:8px; }
   .base-list label { grid-template-columns:auto 1fr; }
   .dot { width:12px; height:12px; border-radius:50%; background:var(--c); border:2px solid #fff; box-shadow:0 0 0 1px rgba(0,0,0,.25); }
   .cat-list button.dot { width:18px; height:18px; padding:0; cursor:pointer; }
@@ -119,6 +127,8 @@
     </form>
 
     <h2>Base map</h2>
+    <details id="baseBox">
+    <summary><span>Map options</span><small id="baseSummary"></small></summary>
     <select id="basemap" aria-label="Base map">
       <option value="">Map</option>
       <option value="light">Light</option>
@@ -135,6 +145,7 @@
     </ul>
     <label for="baseFade">Fade the base map</label>
     <input type="range" id="baseFade" min="0" max="0.8" step="0.05" style="padding:0;border:0">
+    </details>
 
     <h2>Categories</h2>
     <ul id="catList" class="cat-list"></ul>
@@ -197,11 +208,11 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <!-- Change ?v= on every release so browsers load the new scripts together with this page. -->
-<script src="app.js?v=20261105h"></script>
+<script src="app.js?v=20261106a"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="strava.js?v=20261105h"></script>
-<script src="sync.js?v=20261105h"></script>
+<script src="strava.js?v=20261106a"></script>
+<script src="sync.js?v=20261106a"></script>
 </body>
 </html>
