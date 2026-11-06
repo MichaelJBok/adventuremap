@@ -67,18 +67,41 @@ function readFit(buffer) {
   return { points, start: start === null ? null : new Date((start + FIT_EPOCH) * 1000), sport: FIT_SPORTS[sport] ?? "Other" };
 }
 
+// The sport named in some text, such as a GPX type or name, or the message shared with a link.
+const SPORT_WORDS = [["run", "Run"], ["jog", "Run"], ["löp", "Run"], ["hik", "Hike"], ["trek", "Hike"], ["vandr", "Hike"],
+  ["walk", "Walk"], ["promen", "Walk"], ["cycl", "Ride"], ["bik", "Ride"], ["ride", "Ride"], ["cykl", "Ride"]];
+const sportIn = (text) => SPORT_WORDS.find(([word]) => (text ?? "").toLowerCase().includes(word))?.[1];
+
+// Judged from moving speed when nothing names the sport: stops (under 0.8 m/s) don't count.
+function sportFromSpeed(points, times) {
+  let metresMoving = 0, secondsMoving = 0;
+  for (let i = 1; i < points.length; i++) {
+    const seconds = (times[i] - times[i - 1]) / 1000;
+    if (!(seconds > 0) || seconds > 300) continue;
+    const m = metres({ lat: points[i - 1][1], lon: points[i - 1][0] }, { lat: points[i][1], lon: points[i][0] });
+    if (m / seconds < 0.8) continue;
+    metresMoving += m;
+    secondsMoving += seconds;
+  }
+  if (secondsMoving < 300) return "Other";
+  const kmh = metresMoving / secondsMoving * 3.6;
+  return kmh < 6.8 ? "Walk" : kmh < 18 ? "Run" : "Ride";
+}
+
 function readGpx(text) {
   const doc = new DOMParser().parseFromString(text, "application/xml");
   const trkpts = [...doc.getElementsByTagNameNS("*", "trkpt")];
   const pts = trkpts.length ? trkpts : [...doc.getElementsByTagNameNS("*", "rtept")]; // some apps export a route instead
-  const time = pts.map((p) => p.getElementsByTagNameNS("*", "time")[0]?.textContent).find(Boolean);
-  const type = (doc.getElementsByTagNameNS("*", "type")[0]?.textContent ?? "").toLowerCase();
-  const sport = [["run", "Run"], ["hik", "Hike"], ["walk", "Walk"], ["cycl", "Ride"], ["bik", "Ride"], ["rid", "Ride"]]
-    .find(([word]) => type.includes(word))?.[1] ?? "Other";
+  const times = pts.map((p) => Date.parse(p.getElementsByTagNameNS("*", "time")[0]?.textContent ?? ""));
+  const time = times.find((t) => !isNaN(t));
+  const tagText = (tag) => [...doc.getElementsByTagNameNS("*", tag)].map((e) => e.textContent).join(" ");
+  const points = pts.map((p) => [Number(p.getAttribute("lon")), Number(p.getAttribute("lat"))]);
+  const kept = points.map((p, i) => [p, times[i]]).filter(([[x, y]]) => x || y);
   return {
-    points: pts.map((p) => [Number(p.getAttribute("lon")), Number(p.getAttribute("lat"))]).filter(([x, y]) => x || y),
-    start: time ? new Date(time) : null,
-    sport,
+    points: kept.map(([p]) => p),
+    start: time === undefined ? null : new Date(time),
+    sport: sportIn(tagText("type")) ?? sportIn(`${tagText("name")} ${tagText("desc")} ${tagText("keywords")}`)
+      ?? sportFromSpeed(kept.map(([p]) => p), kept.map(([, t]) => t)),
     name: doc.getElementsByTagNameNS("*", "trk")[0]?.getElementsByTagNameNS("*", "name")[0]?.textContent.trim(),
   };
 }
@@ -105,11 +128,13 @@ function simplifyLine(pts) {
 }
 
 // A track from a FIT or GPX file. Its id comes from the start time, so sharing the same file twice adds it once.
-async function readTrackFile(file) {
+async function readTrackFile(file, hint = "") {
   // Judged by content, since a shared file's name may lack its extension: FIT files carry ".FIT" at byte 8.
   const buffer = await file.arrayBuffer();
   const fit = buffer.byteLength >= 12 && new TextDecoder().decode(new Uint8Array(buffer, 8, 4)) === ".FIT";
   const read = fit ? readFit(buffer) : readGpx(new TextDecoder().decode(buffer));
+  // Text shared alongside a link (like "my running workout") names the sport when the file doesn't.
+  if (read.sport === "Other" || !fit) read.sport = sportIn(hint) ?? read.sport;
   if (read.points.length < 2) {
     // Show the start of what arrived, since a share can carry a link or message instead of a workout file.
     const sample = fit ? "" : new TextDecoder().decode(buffer.slice(0, 300)).replace(/\s+/g, " ").trim();
@@ -142,7 +167,9 @@ async function fetchLinkedWorkout(text) {
   const res = await fetch(link);
   if (!res.ok) throw new Error(`The Suunto link didn't give a workout (error ${res.status}). Links from an export may expire, so try exporting again.`);
   const name = res.headers.get("content-disposition")?.match(/filename="?([^";]+)/)?.[1] ?? "suunto workout";
-  return new File([await res.blob()], name);
+  const file = new File([await res.blob()], name);
+  file.hint = text.replace(WORKOUT_LINK, ""); // the rest of the shared message
+  return file;
 }
 
 // Imports watch files, then shows the newest on the map so it's clear what arrived.
@@ -150,12 +177,12 @@ async function importTrackFiles(files) {
   const found = [], failed = [];
   for (const file of files) {
     try {
-      found.push(await readTrackFile(file));
+      found.push(await readTrackFile(file, file.hint));
     } catch (e) {
       // A small text file may just hold a link to the workout.
       const linked = file.size < 5000 ? await fetchLinkedWorkout(await file.text()).catch((err) => err) : null;
       if (linked instanceof File) {
-        try { found.push(await readTrackFile(linked)); } catch (err) { failed.push(err.message); }
+        try { found.push(await readTrackFile(linked, linked.hint)); } catch (err) { failed.push(err.message); }
       } else failed.push(linked instanceof Error ? linked.message : e.message);
     }
   }
