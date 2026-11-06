@@ -132,11 +132,32 @@ async function readTrackFile(file) {
   };
 }
 
+// The Suunto app's export shares a download link rather than the file itself. Its server (Sports Tracker,
+// which runs the Suunto app's backend) lets this page download from it, so the link is followed here.
+const WORKOUT_LINK = /https:\/\/[\w.-]*(sports-tracker\.com|suunto\.com)\/[^\s"'<>]+/i;
+
+async function fetchLinkedWorkout(text) {
+  const link = text.match(WORKOUT_LINK)?.[0];
+  if (!link) return null;
+  const res = await fetch(link);
+  if (!res.ok) throw new Error(`The Suunto link didn't give a workout (error ${res.status}). Links from an export may expire, so try exporting again.`);
+  const name = res.headers.get("content-disposition")?.match(/filename="?([^";]+)/)?.[1] ?? "suunto workout";
+  return new File([await res.blob()], name);
+}
+
 // Imports watch files, then shows the newest on the map so it's clear what arrived.
 async function importTrackFiles(files) {
   const found = [], failed = [];
   for (const file of files) {
-    try { found.push(await readTrackFile(file)); } catch (e) { failed.push(e.message); }
+    try {
+      found.push(await readTrackFile(file));
+    } catch (e) {
+      // A small text file may just hold a link to the workout.
+      const linked = file.size < 5000 ? await fetchLinkedWorkout(await file.text()).catch((err) => err) : null;
+      if (linked instanceof File) {
+        try { found.push(await readTrackFile(linked)); } catch (err) { failed.push(err.message); }
+      } else failed.push(linked instanceof Error ? linked.message : e.message);
+    }
   }
   let message = failed.join(" ");
   try {
@@ -180,6 +201,8 @@ async function takeSharedFiles() {
       files.push(new File([await response.blob()], decodeURIComponent(response.headers.get("x-name") ?? "shared file")));
       await cache.delete(request);
     }
+    const linked = !files.length && words ? await fetchLinkedWorkout(words) : null;
+    if (linked) files.push(linked);
     if (files.length) await importTrackFiles(files);
     else openPopup(map.getCenter(), `<div class="pop-title">No file arrived</div>
       <p class="pop-notes">The share opened Adventure Map, but no file came with it${words ? `, only this: “${esc(words.slice(0, 300))}”` : ""}.
