@@ -56,6 +56,10 @@
   #stylePanel label.check { display:flex; gap:8px; align-items:center; margin-top:10px; font-weight:normal; font-size:14px; }
   #stylePanel label.check input { width:auto; margin:0; }
   #heatOptions select { flex:1; width:auto; }
+  #mushroomMode { position:fixed; inset:0; z-index:30; background:var(--bg); }
+  #mushroomMode iframe { width:100%; height:100%; border:0; display:block; }
+  #mushroomBack { position:absolute; left:50%; transform:translateX(-50%); bottom:calc(28px + env(safe-area-inset-bottom)); z-index:1;
+    border-radius:999px; padding:8px 14px; box-shadow:0 2px 8px rgba(0,0,0,.25); font-weight:600; }
   button.link { border:0; background:none; padding:2px 0; color:var(--accent); font-size:12px; }
   .count { color:var(--muted); font-variant-numeric:tabular-nums; }
 
@@ -197,6 +201,10 @@
     <p class="hint" style="margin-top:12px">Signed out, places stay only in this browser. Export now and then as a backup. To update geocaches, import a Geocaching My Finds GPX file; only new finds are added.</p>
   </aside>
   <div id="map"></div>
+  <div id="mushroomMode" hidden>
+    <iframe id="mushroomFrame" title="Svampkartan" allow="geolocation; camera; fullscreen"></iframe>
+    <button type="button" id="mushroomBack">← Adventure Map</button>
+  </div>
   <div id="stylePanel" role="dialog" aria-labelledby="styleTitle" hidden>
     <h3 id="styleTitle"></h3>
     <label for="styleColor">Colour</label>
@@ -212,12 +220,12 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <!-- Change ?v= on every release so browsers load the new scripts together with this page. -->
-<script src="app.js?v=20261106h"></script>
+<script src="app.js?v=20261106i"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="trackfiles.js?v=20261106h"></script>
-<script src="strava.js?v=20261106h"></script>
-<script src="sync.js?v=20261106h"></script>
+<script src="trackfiles.js?v=20261106i"></script>
+<script src="strava.js?v=20261106i"></script>
+<script src="sync.js?v=20261106i"></script>
 </body>
 </html>

@@ -257,6 +257,38 @@ class MenuControl {
 }
 map.addControl(new MenuControl(), "top-left");
 
+// Mushroom mode: Svampkartan, full screen inside this app. It's the same site, so it's already signed in,
+// and finds made there show up here as soon as it saves them. One installed app does both.
+const MUSHROOM_MODE_KEY = "adventuremap.mushroomMode";
+const MUSHROOM_ICON = `<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor"
+  d="M12 3C6.5 3 2.5 6.6 2.5 10.2c0 .9.7 1.3 1.6 1.3h15.8c.9 0 1.6-.4 1.6-1.3C21.5 6.6 17.5 3 12 3zM9 13h6l.7 6.2A1.6 1.6 0 0 1 14.1 21h-4.2a1.6 1.6 0 0 1-1.6-1.8z"/></svg>`;
+
+class MushroomControl {
+  onAdd() {
+    const box = document.createElement("div");
+    box.className = "maplibregl-ctrl maplibregl-ctrl-group";
+    box.innerHTML = `<button type="button" class="menu-btn" title="Mushroom mode" aria-label="Mushroom mode">${MUSHROOM_ICON}</button>`;
+    box.firstElementChild.onclick = () => setMushroomMode(true);
+    return box;
+  }
+  onRemove() {}
+}
+map.addControl(new MushroomControl(), "top-left");
+
+function setMushroomMode(on, fromHistory = false) {
+  const box = $("mushroomMode");
+  if (on === !box.hidden) return;
+  if (on && !$("mushroomFrame").src) $("mushroomFrame").src = "../svampkartan/"; // loaded once, then kept
+  box.hidden = !on;
+  writeJson(MUSHROOM_MODE_KEY, on);
+  // Android's back gesture leaves mushroom mode rather than the app.
+  if (on && !fromHistory) history.pushState({ mushroom: true }, "");
+  if (!on && !fromHistory && history.state?.mushroom) history.back();
+}
+$("mushroomBack").onclick = () => setMushroomMode(false);
+addEventListener("popstate", (e) => setMushroomMode(!!e.state?.mushroom, true));
+if (readJson(MUSHROOM_MODE_KEY, false)) setMushroomMode(true);
+
 function setMenuHidden(hidden) {
   $("app").classList.toggle("menu-hidden", hidden);
   const label = hidden ? "Show menu" : "Hide menu";
@@ -769,7 +801,8 @@ function showPlace(id) {
     const found = p.dates.length ? `Found ${p.dates.join(", ")}` : "Date not recorded";
     openPopup([p.lon, p.lat], `<div class="pop-title">${esc(p.name)}</div><div class="pop-meta">${esc(found)}</div>
       ${p.notes ? `<p class="pop-notes">${esc(p.notes)}</p>` : ""}
-      <div class="pop-meta"><a href="../svampkartan/">Edit in Svampkartan</a></div>`);
+      <div class="pop-meta"><button type="button" class="link" id="popMushroom">Edit in mushroom mode</button></div>`);
+    $("popMushroom") && ($("popMushroom").onclick = () => { popup.remove(); setMushroomMode(true); });
     return;
   }
   const link = /^https?:\/\//.test(p.link || "") ? `<div class="pop-meta"><a href="${esc(p.link)}" target="_blank" rel="noopener">Open link</a></div>` : "";
