@@ -470,10 +470,13 @@ function sourceFor(category) {
   map.addLayer({ id: `${id}-labels`, type: "symbol", source: id, minzoom: 13, filter: ["!", ["has", "point_count"]],
     layout: { "text-field": ["get", "name"], "text-font": ["Noto Sans Bold"], "text-size": 11, "text-offset": [0, 1], "text-anchor": "top", "text-optional": true },
     paint: { "text-color": "#2b2a26", "text-halo-color": "#fff", "text-halo-width": 1.4 } });
-  // Always-visible places stay on top of every cluster.
-  const top = sourceIds.get(ALWAYS_VISIBLE);
-  if (top) [`${top}-points`, `${top}-labels`].forEach((l) => map.moveLayer(l));
   return id;
+}
+
+// Within a layer, later lines are drawn on top, so the first kind in the Tracks list goes last.
+function byListOrder(list) {
+  const rank = new Map(allKinds().map((k, i) => [k.name, i]));
+  return [...list].sort((a, b) => rank.get(b.kind.name) - rank.get(a.kind.name));
 }
 
 function drawTracks() {
@@ -481,12 +484,12 @@ function drawTracks() {
   const shown = tracks.filter((t) => !hidden.has(t.kind.name) && !t.plan);
   map.getSource("plans").setData({
     type: "FeatureCollection",
-    features: tracks.filter((t) => t.plan && !hidden.has(t.kind.name)).map(kindFeature),
+    features: byListOrder(tracks.filter((t) => t.plan && !hidden.has(t.kind.name))).map(kindFeature),
   });
   const heat = trackView === "heat";
   map.getSource("tracks").setData({
     type: "FeatureCollection",
-    features: shown.map(kindFeature),
+    features: byListOrder(shown).map(kindFeature),
   });
   if (heat && !heatPoints) {
     heatPoints = tracks.filter((t) => !t.plan).map((t) => ({ kind: t.kind.name, points: t.lines.flatMap(alongLine) }));
@@ -510,9 +513,20 @@ function drawTracks() {
   $("heatOptions").hidden = !heat;
 }
 
+// Markers stack in the order of the Categories list, the first on top; names sit above all of them.
+let markerOrder = "";
+function orderMarkerLayers() {
+  const ids = categories().map((c) => sourceIds.get(c)).filter(Boolean);
+  if (ids.join() === markerOrder) return;
+  markerOrder = ids.join();
+  const layers = (suffixes) => [...ids].reverse().flatMap((id) => suffixes.map((s) => `${id}-${s}`)).filter((l) => map.getLayer(l));
+  [...layers(["clusters", "counts", "points"]), ...layers(["labels"])].forEach((l) => map.moveLayer(l));
+}
+
 function drawPlaces() {
   if (!map.getLayer("peak-dots")) return; // the map hasn't finished loading
   categories().forEach(sourceFor);
+  orderMarkerLayers();
   for (const [category, id] of sourceIds) {
     map.getSource(id).setData(placesGeoJson(category));
     const size = sizeOf(category);
