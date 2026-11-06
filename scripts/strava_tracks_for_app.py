@@ -2,7 +2,8 @@
 
 Usage:  python3 scripts/strava_tracks_for_app.py "<Strava export.zip>"
 Writes private/strava-tracks.json, which you load with "Import JSON or GPX" while signed in.
-Each track keeps Strava's id, so importing a newer export, or a live sync, never adds it twice.
+Each track keeps Strava's id, so importing a newer export, or a live sync, never adds it twice. Importing
+again also fills in details that tracks already in the account lack, such as moving time.
 """
 import json
 import pathlib
@@ -32,7 +33,8 @@ def encode(points):
 def main():
     found, skipped = read_strava(pathlib.Path(sys.argv[1]))
     tracks = [{"id": t["id"], "name": t["name"], "sportType": SPORTS.get(t["activity"], "Other"), "date": t["date"],
-               "distance": round(t["km"] * 1000), "polylines": [encode(simplify(s)) for s in t["segments"]]}
+               "distance": round(t["km"] * 1000), "movingTime": t["movingTime"],
+               "polylines": [encode(simplify(s)) for s in t["segments"]]}
               for t in found]
     OUT.parent.mkdir(exist_ok=True)
     OUT.write_text(json.dumps({"tracks": tracks}, separators=(",", ":")))

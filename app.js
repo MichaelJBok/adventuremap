@@ -161,7 +161,7 @@ let knownTrackIds = new Set();
 
 function setTracks(list) {
   knownTrackIds = new Set(list.map((t) => t.id));
-  tracks = list.filter((t) => !t.deleted).map((t) => ({ ...t, kind: trackKind(t), lines: (t.polylines ?? [t.polyline]).filter(Boolean).map(decodePolyline) }));
+  tracks = list.filter((t) => !t.deleted).map((t) => ({ ...t, name: cleanTrackName(t.name ?? ""), kind: trackKind(t), lines: (t.polylines ?? [t.polyline]).filter(Boolean).map(decodePolyline) }));
   heatPoints = null;
   drawTracks();
   renderTrackKinds();
@@ -578,7 +578,22 @@ function tracksAt(point) {
 
 const TRACK_TYPES = { Run: "Run", Hike: "Hike", Walk: "Walk", Ride: "Ride", Sail: "Sail", Other: "Other" };
 const trackDate = (t) => (t.date ?? "").slice(0, 10);
-const trackMeta = (t) => [t.plan || t.kind.name, trackDate(t), t.distance ? `${(t.distance / 1000).toFixed(1)} km` : ""]
+
+// Suunto exports are named like "suuntoapp-Running-2026-11-06T07-30-00": keep "Running 2026-11-06 07:30".
+function cleanTrackName(name) {
+  return name.replace(/^suuntoapp-/i, "")
+    .replace(/-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})(-\d{2})?$/, " $1 $2:$3").replace(/^(\w+)-(\w+) /, "$1 $2 ").trim();
+}
+
+// Rides read better as speed; everything on foot as pace.
+function paceOf(t) {
+  if (!t.movingTime || !t.distance || t.plan) return "";
+  if (t.kind?.name === "Rides") return `${(t.distance / t.movingTime * 3.6).toFixed(1)} km/h`;
+  const perKm = t.movingTime / (t.distance / 1000);
+  return `${Math.floor(perKm / 60)}:${String(Math.round(perKm % 60)).padStart(2, "0")} min/km`;
+}
+
+const trackMeta = (t) => [t.plan || t.kind.name, trackDate(t), t.distance ? `${(t.distance / 1000).toFixed(1)} km` : "", paceOf(t)]
   .filter(Boolean).join(" · ");
 
 function showTracks(e) {
@@ -1007,14 +1022,23 @@ function importTracks(list) {
   const sameOuting = (a, b) => a.date && (a.date ?? "").slice(0, 10) === (b.date ?? "").slice(0, 10)
     && Math.abs(a.distance - b.distance) <= 0.03 * Math.max(a.distance, b.distance);
   const valid = all.filter((t) => !knownTrackIds.has(t.id) && !tracks.some((x) => sameOuting(t, x)));
+  // Tracks already here gain details they lack (like moving time, for pace) without losing any edits.
+  const filled = all.flatMap((t) => {
+    const here = tracks.find((x) => x.id === t.id || sameOuting(t, x));
+    if (!here || here.movingTime || !t.movingTime) return [];
+    const { kind, lines, ...stored } = here;
+    return [{ ...stored, movingTime: t.movingTime }];
+  });
+  if (cloud && filled.length) cloud.saveTracks(filled);
   const count = (n) => `${n.toLocaleString("en-US")} ${n === 1 ? "track" : "tracks"}`;
-  if (!valid.length) return all.length === 1 ? "This track is already here." : `All ${count(all.length)} are already here.`;
+  const pace = filled.length ? ` Added moving time, for pace, to ${count(filled.length)} already here.` : "";
+  if (!valid.length) return (all.length === 1 ? "This track is already here." : `All ${count(all.length)} are already here.`) + pace;
   if (!cloud) {
     setTracks([...tracks, ...valid]);
     return `Showing ${count(valid.length)} until you reload. Sign in first to keep them.`;
   }
   cloud.saveTracks(valid);
-  return `Saving ${count(valid.length)} to your account…`;
+  return `Saving ${count(valid.length)} to your account…${pace}`;
 }
 
 $("importBtn").onclick = () => $("importFile").click();

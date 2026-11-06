@@ -272,6 +272,7 @@ def read_strava(path):
                            "activity": STRAVA_TYPES.get(row["Activity Type"], ""), "notes": row["Activity Description"][:300],
                            "km": round(sum(metres(a, b) for s in segs for a, b in zip(s, s[1:])) / 1000, 2),
                            "points": sum(len(s) for s in segs), "segments": segs,
+                           "movingTime": round(float(row.get("Moving Time") or 0)) or None,
                            "cells": {(round(p[0] / CELL), round(p[1] / CELL)) for s in segs for p in s}})
     return tracks, skipped
 

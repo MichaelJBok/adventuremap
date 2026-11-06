@@ -9,7 +9,7 @@ const SIMPLIFY_M = 4; // like the importer scripts: drops points that barely cha
 // The GPS points of a FIT file, plus its start time and sport. A damaged file gives what came before the damage.
 function readFit(buffer) {
   const data = new DataView(buffer);
-  const points = [];
+  const points = [], times = [];
   const layouts = {};
   let start = null, sport = null, lastTime = null;
   let pos = data.getUint8(0);
@@ -49,12 +49,13 @@ function readFit(buffer) {
       }
       const layout = layouts[local];
       if (layout.number === FIT_RECORD) {
+        const time = value(layout.fields, pos, layout.little, 253);
+        if (time !== null) lastTime = time;
         const lat = value(layout.fields, pos, layout.little, 0), lon = value(layout.fields, pos, layout.little, 1);
         if (lat !== null && lon !== null && lat !== 0x7fffffff && lon !== 0x7fffffff) {
           points.push([lon * 180 / 2 ** 31, lat * 180 / 2 ** 31]);
+          times.push(lastTime === null ? NaN : (lastTime + FIT_EPOCH) * 1000);
         }
-        const time = value(layout.fields, pos, layout.little, 253);
-        if (time !== null) lastTime = time;
         if (start === null && lastTime !== null) start = lastTime;
       } else if (layout.number === FIT_SESSION) {
         sport = value(layout.fields, pos, layout.little, 5) ?? sport;
@@ -64,7 +65,7 @@ function readFit(buffer) {
       pos += layout.size;
     }
   } catch {} // reading past the end of a cut-off file
-  return { points, start: start === null ? null : new Date((start + FIT_EPOCH) * 1000), sport: FIT_SPORTS[sport] ?? "Other" };
+  return { points, times, start: start === null ? null : new Date((start + FIT_EPOCH) * 1000), sport: FIT_SPORTS[sport] ?? "Other" };
 }
 
 // The sport named in some text, such as a GPX type or name, or the message shared with a link.
@@ -72,8 +73,8 @@ const SPORT_WORDS = [["run", "Run"], ["jog", "Run"], ["löp", "Run"], ["hik", "H
   ["walk", "Walk"], ["promen", "Walk"], ["cycl", "Ride"], ["bik", "Ride"], ["ride", "Ride"], ["cykl", "Ride"]];
 const sportIn = (text) => SPORT_WORDS.find(([word]) => (text ?? "").toLowerCase().includes(word))?.[1];
 
-// Judged from moving speed when nothing names the sport: stops (under 0.8 m/s) don't count.
-function sportFromSpeed(points, times) {
+// Distance and time spent moving: stops (under 0.8 m/s) and long pauses don't count.
+function moving(points, times) {
   let metresMoving = 0, secondsMoving = 0;
   for (let i = 1; i < points.length; i++) {
     const seconds = (times[i] - times[i - 1]) / 1000;
@@ -83,6 +84,12 @@ function sportFromSpeed(points, times) {
     metresMoving += m;
     secondsMoving += seconds;
   }
+  return { metres: metresMoving, seconds: secondsMoving };
+}
+
+// Judged from moving speed when nothing names the sport.
+function sportFromSpeed(points, times) {
+  const { metres: metresMoving, seconds: secondsMoving } = moving(points, times);
   if (secondsMoving < 300) return "Other";
   const kmh = metresMoving / secondsMoving * 3.6;
   return kmh < 6.8 ? "Walk" : kmh < 18 ? "Run" : "Ride";
@@ -99,6 +106,7 @@ function readGpx(text) {
   const kept = points.map((p, i) => [p, times[i]]).filter(([[x, y]]) => x || y);
   return {
     points: kept.map(([p]) => p),
+    times: kept.map(([, t]) => t),
     start: time === undefined ? null : new Date(time),
     sport: sportIn(tagText("type")) ?? sportIn(`${tagText("name")} ${tagText("desc")} ${tagText("keywords")}`)
       ?? sportFromSpeed(kept.map(([p]) => p), kept.map(([, t]) => t)),
@@ -135,6 +143,8 @@ async function readTrackFile(file, hint = "") {
   const read = fit ? readFit(buffer) : readGpx(new TextDecoder().decode(buffer));
   // Text shared alongside a link (like "my running workout") names the sport when the file doesn't.
   if (read.sport === "Other" || !fit) read.sport = sportIn(hint) ?? read.sport;
+  // Suunto names exports like "suuntoapp-Running-2026-11-06T07-30-00", which names the sport too.
+  if (read.sport === "Other") read.sport = sportIn(read.name) ?? "Other";
   if (read.points.length < 2) {
     // Show the start of what arrived, since a share can carry a link or message instead of a workout file.
     const sample = fit ? "" : new TextDecoder().decode(buffer.slice(0, 300)).replace(/\s+/g, " ").trim();
@@ -150,10 +160,13 @@ async function readTrackFile(file, hint = "") {
   const kept = lines.filter((l) => l.length > 1).map(simplifyLine);
   const start = read.start && !isNaN(read.start) ? read.start : null;
   const date = start ? start.toISOString().slice(0, 10) : "";
+  const { seconds } = moving(read.points, read.times ?? []);
+  const name = cleanTrackName(read.name ?? "");
   return {
     id: start ? `file-${Math.round(start.getTime() / 1000)}` : `file-${file.name}-${read.points.length}`,
-    name: read.name || [read.sport === "Other" ? "Workout" : read.sport, date].filter(Boolean).join(" "),
+    name: name || [read.sport === "Other" ? "Workout" : read.sport, date].filter(Boolean).join(" "),
     sportType: read.sport, date, distance: Math.round(lineLength(kept)), polylines: kept.map(encodePolyline),
+    ...(seconds > 60 ? { movingTime: Math.round(seconds) } : {}),
   };
 }
 
