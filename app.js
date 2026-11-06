@@ -225,7 +225,8 @@ function findSaved(name, lat, lon) {
 const view = readJson(VIEW_KEY, { center: [13, 45], zoom: 3 });
 let currentStyle = styleUrl(display.base?.map);
 const map = new maplibregl.Map({ container: "map", style: currentStyle, ...view });
-map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }));
+// Zoom sits at the bottom so the buttons at the top match Svampkartan's in mushroom mode.
+map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), "bottom-right");
 map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
 map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true }));
 map.on("moveend", () => writeJson(VIEW_KEY, { center: map.getCenter().toArray(), zoom: map.getZoom() }));
@@ -235,7 +236,7 @@ class PinControl {
     const box = document.createElement("div");
     box.className = "maplibregl-ctrl maplibregl-ctrl-group";
     box.innerHTML = `<button type="button" class="place-btn" id="placeBtn" aria-label="Drop a pin" aria-pressed="false" title="Drop a pin">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5z"/></svg></button>`;
+      <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M12 22s7-7.2 7-12.5a7 7 0 0 0-14 0C5 14.8 12 22 12 22z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M12 6.5v6M9 9.5h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>`;
     box.firstElementChild.onclick = () => setPlacing(!placing);
     return box;
   }
@@ -279,6 +280,13 @@ function setMushroomMode(on, fromHistory = false) {
   const box = $("mushroomMode");
   if (on === !box.hidden) return;
   if (on && !$("mushroomFrame").src) $("mushroomFrame").src = "../svampkartan/"; // loaded once, then kept
+  // The side menu is open or hidden in both modes alike, so the map buttons don't shift when switching.
+  const frame = $("mushroomFrame").contentWindow;
+  const menuHidden = $("app").classList.contains("menu-hidden");
+  try {
+    if (on) frame?.setMenuHidden?.(menuHidden);
+    else if (frame?.document?.getElementById("app")) setMenuHidden(frame.document.getElementById("app").classList.contains("menu-hidden"));
+  } catch {}
   box.hidden = !on;
   writeJson(MUSHROOM_MODE_KEY, on);
   // Android's back gesture leaves mushroom mode rather than the app.
@@ -286,6 +294,10 @@ function setMushroomMode(on, fromHistory = false) {
   if (!on && !fromHistory && history.state?.mushroom) history.back();
 }
 $("mushroomBack").onclick = () => setMushroomMode(false);
+$("mushroomFrame").onload = () => { try { $("mushroomFrame").contentWindow.setMenuHidden?.($("app").classList.contains("menu-hidden")); } catch {} };
+// Svampkartan draws its own back button where the mushroom button is; this one stays only as a fallback.
+window.setMushroomMode = setMushroomMode;
+window.mushroomBackShown = () => { $("mushroomBack").hidden = true; };
 addEventListener("popstate", (e) => setMushroomMode(!!e.state?.mushroom, true));
 if (readJson(MUSHROOM_MODE_KEY, false)) setMushroomMode(true);
 
