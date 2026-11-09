@@ -84,6 +84,33 @@ def cells(segs):
     return out
 
 
+class Known:
+    """Tracks already made, found again by the ground they cover. A route walked again on another day is another
+    outing, so a match needs the same day, give or take one for time zones, unless one side has no date."""
+
+    def __init__(self):
+        self.dates, self.index = [], {}
+
+    def add(self, date, track_cells):
+        i = len(self.dates)
+        self.dates.append(date or "")
+        for cell in track_cells:
+            self.index.setdefault(cell, []).append(i)
+
+    def covers(self, track_cells, date):
+        counts = {}
+        for cell in track_cells:
+            for i in self.index.get(cell, ()):
+                counts[i] = counts.get(i, 0) + 1
+        return any(n >= SAME_ROUTE * len(track_cells) and near(date, self.dates[i]) for i, n in counts.items())
+
+
+def near(a, b):
+    if not a or not b:
+        return True
+    return abs((datetime.date.fromisoformat(a[:10]) - datetime.date.fromisoformat(b[:10])).days) <= 1
+
+
 def decode(s):
     pts, i, lat, lon = [], 0, 0, 0
     while i < len(s):
@@ -105,12 +132,12 @@ def decode(s):
 
 def main():
     folder = pathlib.Path(sys.argv[1])
-    known = [(t["name"], cells(t["segments"])) for t in json.loads(EARLY.read_text()) if not t["id"].startswith("strava-")]
-    known += [(t["name"], cells([decode(p) for p in t["polylines"]])) for t in json.loads(STRAVA.read_text())["tracks"]]
-    index = {}
-    for i, (_, c) in enumerate(known):
-        for cell in c:
-            index.setdefault(cell, []).append(i)
+    known = Known()
+    for t in json.loads(EARLY.read_text()):
+        if not t["id"].startswith("strava-"):
+            known.add(t["date"], cells(t["segments"]))
+    for t in json.loads(STRAVA.read_text())["tracks"]:
+        known.add(t["date"], cells([decode(p) for p in t["polylines"]]))
     recordings, skipped = [], {"short": 0, "drive": 0, "unreadable": 0}
     for path in sorted(folder.glob("*.km[lz]")):
         try:
@@ -126,23 +153,21 @@ def main():
         if (r["kind"] == "driving" and length > DRIVE_M) or (r["kind"] not in SPORTS and length > ROAD_TRIP_M):
             skipped["drive"] += 1
             continue
-        recordings.append({**r, "file": path.name, "segs": segs, "length": length, "cells": cells(segs)})
+        # Compared as simplified lines, like the tracks they're matched against, so GPS jitter isn't new ground.
+        recordings.append({**r, "file": path.name, "segs": segs, "length": length,
+                           "cells": cells([simplify(s) for s in segs])})
     # The longest copy of a recording is kept; a shorter one inside it is the same outing.
     recordings.sort(key=lambda r: -len(r["cells"]))
-    missing, matched, copies = [], 0, 0
+    missing, matched, copies, kept = [], 0, 0, Known()
     for r in recordings:
-        counts = {}
-        for cell in r["cells"]:
-            for i in index.get(cell, ()):
-                counts[i] = counts.get(i, 0) + 1
-        best = max(counts.values(), default=0)
-        if best >= SAME_ROUTE * len(r["cells"]):
+        date = r["start"].date().isoformat() if r["start"] else ""
+        if known.covers(r["cells"], date):
             matched += 1
-            continue
-        if any(len(r["cells"] & m["cells"]) >= SAME_ROUTE * len(r["cells"]) for m in missing):
+        elif kept.covers(r["cells"], date):
             copies += 1
-            continue
-        missing.append(r)
+        else:
+            missing.append(r)
+            kept.add(date, r["cells"])
     missing.sort(key=lambda r: (r["start"] is None, r["start"] or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc)))
     tracks = []
     for r in missing:
