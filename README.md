@@ -14,6 +14,7 @@ sign in. They are never included in this repository. Use **Export JSON** for a b
 - `scripts/import_kmz.py`: converts a Google My Maps KMZ export to `private/adventure-places.json`, loaded with **Import JSON**
 - `scripts/import_tracks.py`: collects tracks from a Google Fusion Tables Takeout and a Strava export into `private/`, with `private/track-review.html` for reviewing them on a map (template: `scripts/track_review.html`)
 - `scripts/early_tracks_for_app.py`: turns `private/early-tracks.json` (or the review page's kept tracks) into `private/early-app-tracks.json` for import, leaving out Strava copies, fragments and drives
+- `scripts/mytracks_for_app.py`: reads Google My Tracks KML/KMZ files (its Drive folder) and writes the recordings not already among the early or Strava tracks to `private/mytracks-app-tracks.json`, with a list in `private/mytracks-missing.txt`
 - `scripts/strava_tracks_for_app.py`: turns a Strava account export into `private/strava-tracks.json`; import it while signed in to save the tracks to `users/{uid}/tracks`. Tracks show as lines or as a heatmap
 - `scripts/suunto_tracks_for_app.py`: reads a Suunto data export (Account settings → Export data) and writes the workouts missing from `private/strava-tracks.json` to `private/suunto-tracks.json`, with a list in `private/suunto-missing.txt`; import it the same way
 - `scripts/route_set_for_app.py`: turns trail GPX files (for example Skåneleden's) into a planning route set in `private/`; it shows as a dashed layer, unticked at first and left out of the heatmap
