@@ -4,7 +4,7 @@ A personal map of places visited, geocache finds and dive sites. Click anything 
 add it to your places, or drop a pin for spots the map doesn't name.
 
 Your places are stored in your browser's local storage, and in a private Firestore collection once you
-sign in. They are never included in this repository. Use **Export JSON** for a backup.
+sign in. They are never included in this repository. Use **Export JSON** for a backup: one file with your places, tracks (route sets included), deleted tracks and display settings, which **Import file** restores.
 
 - `index.html`, `app.js`: the app (MapLibre, OpenFreeMap vector tiles, OpenStreetMap data)
 - `sync.js`: Google sign-in and Firestore sync, sharing Svampkartan's Firebase project

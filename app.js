@@ -1039,8 +1039,29 @@ for (const key of BASE_SWITCHES) $(`base-${key}`).onchange = (e) => setBase({ [k
 $("baseFade").oninput = () => setBase({ fade: Number($("baseFade").value) });
 
 // --- Backup ---
+// Only settings this version knows, so an old or hand-edited backup can't break the map.
+function validDisplay(d) {
+  const out = {};
+  for (const key of ["colors", "sizes", "opacities", "solid", "base"]) {
+    if (d[key] && typeof d[key] === "object" && !Array.isArray(d[key])) out[key] = d[key];
+  }
+  if (HEAT_STYLES[d.heatStyle]) out.heatStyle = d.heatStyle;
+  if (HEAT_WIDTHS[d.heatWidth]) out.heatWidth = d.heatWidth;
+  return out;
+}
+
+// One file holds everything this app keeps: places, tracks (route sets included), deleted tracks' ids so they stay
+// deleted, and the map's display settings. Mushroom finds belong to Svampkartan and Strava's keys stay private.
 $("exportBtn").onclick = () => {
-  const blob = new Blob([JSON.stringify({ places }, null, 1)], { type: "application/json" });
+  const live = new Set(tracks.map((t) => t.id));
+  const backup = {
+    exported: new Date().toISOString(),
+    places,
+    tracks: tracks.map(({ kind, lines, ...t }) => t),
+    deletedTracks: [...knownTrackIds].filter((id) => !live.has(id)),
+    display,
+  };
+  const blob = new Blob([JSON.stringify(backup, null, 1)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = `adventure-map-${new Date().toISOString().slice(0, 10)}.json`;
@@ -1124,15 +1145,29 @@ $("importFile").onchange = async (e) => {
       await importTrackFiles(files.filter((f) => /\.(fit|gpx)$/i.test(f.name)));
       return;
     }
+    // A backup from Export JSON can hold places, tracks, deleted tracks and display settings; a file made by the
+    // scripts holds only tracks or only places.
     const data = JSON.parse(await file.text());
-    if (data.tracks) {
-      $("importStatus").textContent = importTracks(data.tracks);
-      return;
-    }
+    const done = [];
     const list = (data.places ?? []).filter((p) => p.id && p.name && p.category && Number.isFinite(p.lat) && Number.isFinite(p.lon));
-    if (!list.length) throw new Error("no places in this file");
-    addPlaces(list);
-    $("importStatus").textContent = `Imported ${list.length.toLocaleString("en-US")} places.`;
+    if (list.length) {
+      addPlaces(list);
+      done.push(`Imported ${list.length.toLocaleString("en-US")} places.`);
+    }
+    const gone = (data.deletedTracks ?? []).filter((id) => typeof id === "string" && !knownTrackIds.has(id));
+    if (cloud && gone.length) {
+      gone.forEach((id) => cloud.saveTrack({ id, deleted: true }));
+      knownTrackIds = new Set([...knownTrackIds, ...gone]);
+    }
+    if (data.tracks?.length) {
+      try { done.push(importTracks(data.tracks)); } catch (err) { done.push(`Tracks not imported: ${err.message}.`); }
+    }
+    if (data.display && typeof data.display === "object") {
+      setDisplay(validDisplay(data.display));
+      done.push("Display settings restored.");
+    }
+    if (!done.length) throw new Error("nothing to import in this file");
+    $("importStatus").textContent = done.join(" ");
   } catch (err) {
     $("importStatus").textContent = `Import failed: ${err.message}`;
   }
