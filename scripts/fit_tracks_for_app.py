@@ -2,9 +2,10 @@
 
 Usage:  python3 scripts/fit_tracks_for_app.py "<folder holding one or more Takeout*/Fit folders>" [--auto KM]
 Fit's "All sessions" records say which app made each session. Workouts started in the Fit app are kept, and My Tracks
-recordings newer than its Drive folder; copies of Strava workouts are left to the Strava export, and the walks and rides
-Fit detected by itself are left out, unless --auto is given with the shortest distance
-in km to keep. Each workout's route comes from the TCX file of the same start in "Activities".
+recordings newer than its Drive folder; copies of Strava workouts are left to the Strava export. Of the walks and runs
+Fit detected by itself, walks of 8 km or more are kept, and runs from before the first Strava track; the rest are
+everyday walks, commutes or rougher copies of Strava runs. --auto KM keeps every detected session from that distance.
+Each workout's route comes from the TCX file of the same start in "Activities".
 Workouts already among the early, My Tracks, Strava or Suunto tracks on the same day are left out. Writes the rest to
 private/fit-app-tracks.json, loaded with "Import JSON or GPX" while signed in, and lists them in private/fit-missing.txt.
 """
@@ -32,6 +33,19 @@ TIME = re.compile(r"<Time>([^<]+)</Time>")
 LAT = re.compile(r"<LatitudeDegrees>([^<]+)</LatitudeDegrees>")
 LON = re.compile(r"<LongitudeDegrees>([^<]+)</LongitudeDegrees>")
 MIN_M = 500
+AUTO = "com.google.android.gms"   # Fit's own detection of walks, runs and rides
+AUTO_WALK_M = 8000
+AUTO_WALK_KMH = 7         # a detected "walk" faster than this overall, stops included, was partly a ride or a bus
+AUTO_RUN_M = 2000
+AUTO_SAME_ROUTE = 0.5     # a detected session sharing half its ground with a track that day is that outing, roughly
+
+
+def keep_detected(sport, length, elapsed, date, strava_start, auto_m):
+    if auto_m is not None:
+        return length >= auto_m
+    if sport in ("Walk", "Hike"):
+        return length >= AUTO_WALK_M and elapsed and length / elapsed * 3.6 <= AUTO_WALK_KMH
+    return sport == "Run" and length >= AUTO_RUN_M and date < strava_start
 
 
 def when(text):
@@ -63,12 +77,14 @@ def moving_seconds(points, times):
 def main():
     folder = pathlib.Path(sys.argv[1])
     auto_m = float(sys.argv[sys.argv.index("--auto") + 1]) * 1000 if "--auto" in sys.argv else None
-    known = Known()
+    known, strava_start = Known(), "9999"
     for name in OTHERS:
         path = ROOT / "private" / name
         if path.exists():
             for t in json.loads(path.read_text())["tracks"]:
                 known.add(t["date"], cells([decode(p) for p in t["polylines"]]))
+                if name.startswith("strava"):
+                    strava_start = min(strava_start, t["date"])
     # Fit keeps copies of what Strava and My Tracks recorded; their own exports are the originals. My Tracks
     # recordings after the newest one from its Drive folder are only here, so those are kept.
     mytracks = ROOT / "private" / "mytracks-app-tracks.json"
@@ -77,50 +93,55 @@ def main():
     for fit in sorted(folder.glob("**/Fit")):
         routes.update({p.name.split("_PT")[0]: p for p in (fit / "Activities").glob("*.tcx")})
         sessions += [(p, json.loads(p.read_text())) for p in sorted((fit / "All sessions").glob("*.json"))]
-    counts = {"automatic": 0, "copied from Strava or My Tracks": 0, "no route": 0, "short": 0, "drives": 0,
+    counts = {"automatic, left out": 0, "copied from Strava or My Tracks": 0, "no route": 0, "short": 0, "drives": 0,
               "already there": 0, "copies": 0}
     found, kept = [], Known()
+    # Workouts started on purpose go first, so a detected session on the same day never stands in for one.
+    app_of = lambda s: (s.get("application") or {}).get("packageName", "")
+    sessions.sort(key=lambda ps: app_of(ps[1]) == AUTO)
     for path, s in sessions:
-        app = (s.get("application") or {}).get("packageName", "")
-        distance = next((a.get("floatValue", 0) for a in s.get("aggregate", [])
-                         if a["metricName"] == "com.google.distance.delta"), 0)
+        app = app_of(s)
+        detected = app == AUTO
         if app == MY_TRACKS and s["startTime"][:10] > mytracks_end:
             pass
-        elif app == MY_TRACKS or (app != FIT_APP and app != "com.google.android.gms"):
+        elif app == MY_TRACKS or (app != FIT_APP and not detected):
             counts["copied from Strava or My Tracks"] += 1
-            continue
-        elif app != FIT_APP and (auto_m is None or distance < auto_m):
-            counts["automatic"] += 1
             continue
         tcx = routes.get(path.name.rsplit("_", 1)[0])
         points, times = read_tcx(tcx) if tcx else ([], [])
         lines = [s for s in split_at_jumps([points]) if len(s) > 1] if len(points) > 1 else []
         length = sum(metres(a, b) for line in lines for a, b in zip(line, line[1:]))
+        sport = SPORTS.get(s.get("fitnessActivity", ""), "Other")
+        start = when(s["startTime"])
+        date = start.date().isoformat()
+        elapsed = float(str(s.get("duration", "0")).rstrip("s") or 0)
+        if detected and not keep_detected(sport, length, elapsed, date, strava_start, auto_m):
+            counts["automatic, left out"] += 1
+            continue
         if not lines:
             counts["no route"] += 1
             continue
         if length < MIN_M:
             counts["short"] += 1
             continue
-        sport = SPORTS.get(s.get("fitnessActivity", ""), "Other")
         seconds = moving_seconds(points, times)
         if seconds and length / seconds * 3.6 > (RIDE_DRIVE_KMH if sport == "Ride" else DRIVE_KMH):
             counts["drives"] += 1
             continue
-        start = when(s["startTime"])
-        date = start.date().isoformat()
         simple = [simplify(line) for line in lines]
         c = cells(simple)  # simplified, like the tracks it's matched against, so GPS jitter isn't new ground
-        if known.covers(c, date):
+        share = AUTO_SAME_ROUTE if detected else None
+        if known.covers(c, date, *([share] if share else [])):
             counts["already there"] += 1
             continue
-        if kept.covers(c, date):
+        if kept.covers(c, date, *([share] if share else [])):
             counts["copies"] += 1
             continue
         kept.add(date, c)
         found.append({"id": f"fit-{round(start.timestamp())}", "name": s.get("name") or f"{NAMES[sport]} {date}",
                       "sportType": sport, "date": date, "distance": round(length),
-                      **({"movingTime": seconds} if seconds > 60 else {}),
+                      # Detected sessions have points minutes apart, too few for a believable moving time.
+                      **({"movingTime": seconds} if seconds > 60 and not detected else {}),
                       "polylines": [encode(line) for line in simple]})
     found.sort(key=lambda t: t["id"])
     OUT.write_text(json.dumps({"tracks": found}, separators=(",", ":")))

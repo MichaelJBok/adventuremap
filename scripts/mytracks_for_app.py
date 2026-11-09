@@ -97,12 +97,12 @@ class Known:
         for cell in track_cells:
             self.index.setdefault(cell, []).append(i)
 
-    def covers(self, track_cells, date):
+    def covers(self, track_cells, date, share=SAME_ROUTE):
         counts = {}
         for cell in track_cells:
             for i in self.index.get(cell, ()):
                 counts[i] = counts.get(i, 0) + 1
-        return any(n >= SAME_ROUTE * len(track_cells) and near(date, self.dates[i]) for i, n in counts.items())
+        return any(n >= share * len(track_cells) and near(date, self.dates[i]) for i, n in counts.items())
 
 
 def near(a, b):
