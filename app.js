@@ -1105,12 +1105,14 @@ function importTracks(list) {
   const sameOuting = (a, b) => a.date && (a.date ?? "").slice(0, 10) === (b.date ?? "").slice(0, 10)
     && Math.abs(a.distance - b.distance) <= 0.03 * Math.max(a.distance, b.distance);
   const valid = all.filter((t) => !knownTrackIds.has(t.id) && !tracks.some((x) => sameOuting(t, x)));
-  // Tracks already here gain details they lack (moving time, for pace, and notes) without losing any edits.
+  // Tracks already here gain details they lack (moving time, for pace, notes, and a date for an undated track found
+  // in another source) without losing any edits. A date is only taken for the same track id, never a lookalike.
   const filled = all.flatMap((t) => {
     const here = tracks.find((x) => x.id === t.id || sameOuting(t, x));
     const extra = {
       ...(!here?.movingTime && t.movingTime ? { movingTime: t.movingTime } : {}),
       ...(!here?.notes && t.notes ? { notes: t.notes } : {}),
+      ...(!here?.date && t.date && here?.id === t.id ? { date: t.date } : {}),
     };
     if (!here || !Object.keys(extra).length) return [];
     const { kind, lines, ...stored } = here;
@@ -1118,7 +1120,7 @@ function importTracks(list) {
   });
   if (cloud && filled.length) cloud.saveTracks(filled);
   const count = (n) => `${n.toLocaleString("en-US")} ${n === 1 ? "track" : "tracks"}`;
-  const pace = filled.length ? ` Filled in moving time or notes on ${count(filled.length)} already here.` : "";
+  const pace = filled.length ? ` Filled in moving time, notes or dates on ${count(filled.length)} already here.` : "";
   if (!valid.length) return (all.length === 1 ? "This track is already here." : `All ${count(all.length)} are already here.`) + pace;
   if (!cloud) {
     setTracks([...tracks, ...valid]);
