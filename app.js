@@ -674,6 +674,7 @@ function highlightTrack(t) {
 function showTrack(t, at) {
   const el = openPopup(at, `<div class="pop-title">${esc(t.name || "Untitled")}</div>
     <div class="pop-meta">${esc(trackMeta(t))}</div>
+    ${t.notes ? `<p class="pop-notes">${esc(t.notes)}</p>` : ""}
     <div class="row"><button type="button" id="trackEdit">Edit</button>
     <button type="button" id="trackTrim">Trim</button>
     <button type="button" id="trackDelete">Delete</button></div>
@@ -773,6 +774,7 @@ function editTrack(t, at) {
     <label for="tDate">Date</label><input id="tDate" type="date" value="${esc(trackDate(t))}">
     ${t.plan ? "" : `<label for="tType">Type</label><select id="tType">${Object.entries(TRACK_TYPES).map(([v, label]) =>
       `<option value="${v}"${(TRACK_TYPES[t.sportType] ? t.sportType : "Other") === v ? " selected" : ""}>${label}</option>`).join("")}</select>`}
+    <label for="tNotes">Notes</label><textarea id="tNotes" rows="3">${esc(t.notes ?? "")}</textarea>
     <div class="row"><button type="submit" class="primary">Save</button><button type="button" id="tCancel">Cancel</button></div></form>`);
   highlightTrack(t);
   popup.once("close", () => highlightTrack(null));
@@ -780,7 +782,8 @@ function editTrack(t, at) {
   el.querySelector("#trackForm").onsubmit = (e) => {
     e.preventDefault();
     const { kind, lines, ...stored } = t;
-    const updated = { ...stored, name: el.querySelector("#tName").value.trim(), date: el.querySelector("#tDate").value };
+    const updated = { ...stored, name: el.querySelector("#tName").value.trim(), date: el.querySelector("#tDate").value,
+      notes: el.querySelector("#tNotes").value.trim() };
     if (!t.plan) updated.sportType = el.querySelector("#tType").value;
     saveTrack(updated);
     showTrack({ ...updated, kind: trackKind(updated), lines }, at);
@@ -1081,16 +1084,20 @@ function importTracks(list) {
   const sameOuting = (a, b) => a.date && (a.date ?? "").slice(0, 10) === (b.date ?? "").slice(0, 10)
     && Math.abs(a.distance - b.distance) <= 0.03 * Math.max(a.distance, b.distance);
   const valid = all.filter((t) => !knownTrackIds.has(t.id) && !tracks.some((x) => sameOuting(t, x)));
-  // Tracks already here gain details they lack (like moving time, for pace) without losing any edits.
+  // Tracks already here gain details they lack (moving time, for pace, and notes) without losing any edits.
   const filled = all.flatMap((t) => {
     const here = tracks.find((x) => x.id === t.id || sameOuting(t, x));
-    if (!here || here.movingTime || !t.movingTime) return [];
+    const extra = {
+      ...(!here?.movingTime && t.movingTime ? { movingTime: t.movingTime } : {}),
+      ...(!here?.notes && t.notes ? { notes: t.notes } : {}),
+    };
+    if (!here || !Object.keys(extra).length) return [];
     const { kind, lines, ...stored } = here;
-    return [{ ...stored, movingTime: t.movingTime }];
+    return [{ ...stored, ...extra }];
   });
   if (cloud && filled.length) cloud.saveTracks(filled);
   const count = (n) => `${n.toLocaleString("en-US")} ${n === 1 ? "track" : "tracks"}`;
-  const pace = filled.length ? ` Added moving time, for pace, to ${count(filled.length)} already here.` : "";
+  const pace = filled.length ? ` Filled in moving time or notes on ${count(filled.length)} already here.` : "";
   if (!valid.length) return (all.length === 1 ? "This track is already here." : `All ${count(all.length)} are already here.`) + pace;
   if (!cloud) {
     setTracks([...tracks, ...valid]);
