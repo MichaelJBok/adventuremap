@@ -963,6 +963,7 @@ function renderCategories() {
     <input type="checkbox" data-cat="${esc(c)}"${hidden.has(c) ? "" : " checked"}>
     ${colorPicker(c, colorOf(c))}<span>${esc(c)}</span>
     <span class="count">${(counts[c] ?? 0).toLocaleString("en-US")}</span></label></li>`).join("");
+  syncAllToggle("catList", "allCats");
 }
 
 function renderTrackKinds() {
@@ -970,6 +971,15 @@ function renderTrackKinds() {
     <input type="checkbox" data-cat="${esc(k.name)}"${hidden.has(k.name) ? "" : " checked"}>
     ${colorPicker(k.name, kindColor(k))}<span>${esc(k.name)}</span>
     <span class="count">${tracks.filter((t) => t.kind === k).length.toLocaleString("en-US")}</span></label></li>`).join("");
+  syncAllToggle("trackList", "allTracks");
+}
+
+// The checkbox by a list's heading is ticked when every item shows, and half-ticked when only some do.
+function syncAllToggle(listId, toggleId) {
+  const boxes = [...$(listId).querySelectorAll("input[data-cat]")];
+  const on = boxes.filter((b) => b.checked).length;
+  $(toggleId).checked = boxes.length > 0 && on === boxes.length;
+  $(toggleId).indeterminate = on > 0 && on < boxes.length;
 }
 
 $("trackView").value = trackView;
@@ -1000,11 +1010,28 @@ $("trackView").onchange = () => {
 $("catList").onchange = $("trackList").onchange = (e) => {
   const c = e.target.dataset.cat;
   if (e.target.checked) hidden.delete(c); else hidden.add(c);
+  showHiddenChange();
+};
+
+for (const [listId, toggleId] of [["catList", "allCats"], ["trackList", "allTracks"]]) {
+  $(toggleId).onchange = () => {
+    const show = $(toggleId).checked;
+    $(listId).querySelectorAll("input[data-cat]").forEach((b) => {
+      b.checked = show;
+      if (show) hidden.delete(b.dataset.cat); else hidden.add(b.dataset.cat);
+    });
+    showHiddenChange();
+  };
+}
+
+function showHiddenChange() {
   writeJson(HIDDEN_KEY, [...hidden]);
+  syncAllToggle("catList", "allCats");
+  syncAllToggle("trackList", "allTracks");
   drawPlaces();
   drawTracks();
   renderList();
-};
+}
 
 function matchingPlaces() {
   const q = $("search").value.trim().toLowerCase();

@@ -37,6 +37,8 @@
   .cat-list { list-style:none; padding:0; margin:0; }
   .cat-list label { display:grid; grid-template-columns:auto auto 1fr auto; gap:8px; align-items:center; margin:0; padding:5px 0; font-weight:normal; font-size:14px; }
   .cat-list input { width:auto; margin:0; }
+  h2 label.all-toggle { display:flex; gap:8px; align-items:center; margin:0; font:inherit; cursor:pointer; }
+  h2 label.all-toggle input { width:auto; margin:0; }
   .base-list { margin-top:6px; }
   #baseBox { border:1px solid var(--border); border-radius:6px; background:#fff; }
   #baseBox summary { display:flex; gap:8px; align-items:baseline; padding:7px 10px; cursor:pointer; }
@@ -161,11 +163,11 @@
     <input type="range" id="baseFade" min="0" max="0.8" step="0.05" style="padding:0;border:0">
     </details>
 
-    <h2>Categories</h2>
+    <h2><label class="all-toggle"><input type="checkbox" id="allCats" aria-label="Show all categories">Categories</label></h2>
     <ul id="catList" class="cat-list"></ul>
     <button type="button" class="link" id="resetColors" hidden>Reset colours and sizes</button>
 
-    <h2>Tracks</h2>
+    <h2><label class="all-toggle"><input type="checkbox" id="allTracks" aria-label="Show all track types">Tracks</label></h2>
     <select id="trackView" aria-label="Show tracks as" style="margin-bottom:6px">
       <option value="lines">Show as lines</option>
       <option value="heat">Show as heatmap</option>
